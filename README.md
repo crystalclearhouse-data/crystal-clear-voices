@@ -1,4 +1,4 @@
-# CrystalClearHouse Workflows
+# Crystal Clear Voices Workflows
 
 A management system for 28 n8n automation workflows organized by category, with CLI tools, web dashboard, and graduation criteria for moving workflows from experiments to production.
 

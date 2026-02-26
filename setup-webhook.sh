@@ -4,7 +4,7 @@ mkdir -p webhook-server/.vscode scripts
 
 cat > webhook-server/package.json << 'PKG'
 {
-  "name": "crystalclearhouse-webhook-server",
+  "name": "crystal-clear-voices-webhook-server",
   "version": "1.0.0",
   "type": "module",
   "main": "webhook-server.js",

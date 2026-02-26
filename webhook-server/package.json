@@ -1,5 +1,5 @@
 {
-  "name": "crystalclearhouse-webhook-server",
+  "name": "crystal-clear-voices-webhook-server",
   "version": "1.0.0",
   "type": "module",
   "main": "webhook-server.js",

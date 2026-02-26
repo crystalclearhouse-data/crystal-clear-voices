@@ -6,7 +6,7 @@ A framework for advancing n8n workflows from experimental stages into production
 
 ## Workflow Lifecycle
 
-Every workflow at CrystalClearHouse follows a progression:
+Every workflow at Crystal Clear Voices follows a progression:
 
 ```
 Unprocessed → Testing → Active (Production)
