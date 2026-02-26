@@ -1,0 +1,295 @@
+{
+  "name": "Crystal Clear Voices - Social Media Agent",
+  "nodes": [
+    {
+      "name": "Webhook - Receive Post Request",
+      "type": "n8n-nodes-base.webhook",
+      "position": [50, 300],
+      "typeVersion": 1,
+      "webhookId": "social-media-webhook",
+      "parameters": {
+        "path": "social-media/post",
+        "responseMode": "responseNode",
+        "responseData": "first"
+      }
+    },
+    {
+      "name": "Parse Request Body",
+      "type": "n8n-nodes-base.set",
+      "position": [300, 300],
+      "typeVersion": 1,
+      "parameters": {
+        "keepOnlySet": false,
+        "values": [
+          {
+            "name": "platform",
+            "stringValue": "={{ $json.body.platform }}"
+          },
+          {
+            "name": "content",
+            "stringValue": "={{ $json.body.content }}"
+          },
+          {
+            "name": "scheduled_time",
+            "stringValue": "={{ $json.body.scheduled_time || null }}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Validate Content",
+      "type": "n8n-nodes-base.if",
+      "position": [550, 300],
+      "typeVersion": 1,
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.content.length > 0 }}",
+              "operation": "equal",
+              "value2": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Save to Database",
+      "type": "n8n-nodes-base.postgres",
+      "position": [800, 200],
+      "typeVersion": 2,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO social_media_posts (platform, content, status) VALUES ($1, $2, $3) RETURNING id, platform, content;",
+        "queryParams": "={{ $json.platform }},{{ $json.content }},draft"
+      }
+    },
+    {
+      "name": "Check if Scheduled",
+      "type": "n8n-nodes-base.if",
+      "position": [1050, 200],
+      "typeVersion": 1,
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.scheduled_time != null }}",
+              "operation": "equal",
+              "value2": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Schedule Post",
+      "type": "n8n-nodes-base.set",
+      "position": [1300, 100],
+      "typeVersion": 1,
+      "parameters": {
+        "keepOnlySet": false,
+        "values": [
+          {
+            "name": "scheduled",
+            "booleanValue": true
+          },
+          {
+            "name": "publish_time",
+            "stringValue": "={{ $json.scheduled_time }}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Publish Immediately",
+      "type": "n8n-nodes-base.set",
+      "position": [1300, 280],
+      "typeVersion": 1,
+      "parameters": {
+        "keepOnlySet": false,
+        "values": [
+          {
+            "name": "scheduled",
+            "booleanValue": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "Post to Social Platform",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1550, 280],
+      "typeVersion": 3,
+      "parameters": {
+        "url": "={{ 'https://api.example.com/post/' + $json.platform }}",
+        "method": "POST",
+        "headers": {
+          "Authorization": "Bearer {{ $json.auth_token }}"
+        },
+        "body": {
+          "content": "={{ $json.content }}",
+          "media": "={{ $json.media || [] }}"
+        }
+      }
+    },
+    {
+      "name": "Update Post Status",
+      "type": "n8n-nodes-base.postgres",
+      "position": [1800, 280],
+      "typeVersion": 2,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE social_media_posts SET status = $1 WHERE id = $2;",
+        "queryParams": "=published,{{ $json.id }}"
+      }
+    },
+    {
+      "name": "Return Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [2050, 280],
+      "typeVersion": 1,
+      "parameters": {
+        "responseCode": 201,
+        "respondWithOptions": {
+          "responseData": "responseNode"
+        },
+        "responseBody": "{{ { success: true, id: $json.id, platform: $json.platform, status: 'published' } }}"
+      }
+    },
+    {
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [800, 450],
+      "typeVersion": 1,
+      "parameters": {
+        "responseCode": 400,
+        "respondWithOptions": {
+          "responseData": "responseNode"
+        },
+        "responseBody": "{{ { error: 'Invalid content', details: $json.error } }}"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook - Receive Post Request": {
+      "main": [
+        [
+          {
+            "node": "Parse Request Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Request Body": {
+      "main": [
+        [
+          {
+            "node": "Validate Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Content": {
+      "main": [
+        [
+          {
+            "node": "Save to Database",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Database": {
+      "main": [
+        [
+          {
+            "node": "Check if Scheduled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if Scheduled": {
+      "main": [
+        [
+          {
+            "node": "Schedule Post",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publish Immediately",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Post": {
+      "main": [
+        [
+          {
+            "node": "Return Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Immediately": {
+      "main": [
+        [
+          {
+            "node": "Post to Social Platform",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to Social Platform": {
+      "main": [
+        [
+          {
+            "node": "Update Post Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Post Status": {
+      "main": [
+        [
+          {
+            "node": "Return Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "errorHandler": "n8n-nodes-base.errorTrigger",
+    "executionOrder": "v1"
+  }
+}

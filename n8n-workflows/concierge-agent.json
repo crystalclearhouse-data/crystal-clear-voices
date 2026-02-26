@@ -1,0 +1,336 @@
+{
+  "name": "Crystal Clear Voices - Concierge Agent",
+  "nodes": [
+    {
+      "name": "Webhook - Receive Request",
+      "type": "n8n-nodes-base.webhook",
+      "position": [50, 300],
+      "typeVersion": 1,
+      "webhookId": "concierge-webhook",
+      "parameters": {
+        "path": "concierge/request",
+        "responseMode": "responseNode",
+        "responseData": "first"
+      }
+    },
+    {
+      "name": "Parse Request Details",
+      "type": "n8n-nodes-base.set",
+      "position": [300, 300],
+      "typeVersion": 1,
+      "parameters": {
+        "keepOnlySet": false,
+        "values": [
+          {
+            "name": "user_id",
+            "stringValue": "={{ $json.body.user_id }}"
+          },
+          {
+            "name": "request_type",
+            "stringValue": "={{ $json.body.request_type }}"
+          },
+          {
+            "name": "description",
+            "stringValue": "={{ $json.body.description }}"
+          },
+          {
+            "name": "priority",
+            "stringValue": "={{ $json.body.priority || 'normal' }}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Create Request Record",
+      "type": "n8n-nodes-base.postgres",
+      "position": [550, 300],
+      "typeVersion": 2,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO concierge_requests (user_id, request_type, description) VALUES ($1, $2, $3) RETURNING id, user_id, request_type, status, created_at;",
+        "queryParams": "={{ $json.user_id }},{{ $json.request_type }},{{ $json.description }}"
+      }
+    },
+    {
+      "name": "Route by Request Type",
+      "type": "n8n-nodes-base.switch",
+      "position": [800, 300],
+      "typeVersion": 1,
+      "parameters": {
+        "cases": [
+          {
+            "caseProperties": [
+              {
+                "property": "{{ $json.request_type }}",
+                "operation": "equals",
+                "value": "booking"
+              }
+            ]
+          },
+          {
+            "caseProperties": [
+              {
+                "property": "{{ $json.request_type }}",
+                "operation": "equals",
+                "value": "information"
+              }
+            ]
+          },
+          {
+            "caseProperties": [
+              {
+                "property": "{{ $json.request_type }}",
+                "operation": "equals",
+                "value": "support"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "Process Booking Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1050, 100],
+      "typeVersion": 3,
+      "parameters": {
+        "url": "https://api.booking.service/request",
+        "method": "POST",
+        "headers": {
+          "Authorization": "Bearer {{ $env.BOOKING_API_KEY }}"
+        },
+        "body": {
+          "user_id": "={{ $json.user_id }}",
+          "description": "={{ $json.description }}",
+          "priority": "={{ $json.priority }}"
+        }
+      }
+    },
+    {
+      "name": "Process Information Request",
+      "type": "n8n-nodes-base.openAi",
+      "position": [1050, 300],
+      "typeVersion": 1,
+      "parameters": {
+        "model": "gpt-4",
+        "prompt": "As a helpful concierge assistant, answer this request: {{ $json.description }}"
+      }
+    },
+    {
+      "name": "Process Support Request",
+      "type": "n8n-nodes-base.set",
+      "position": [1050, 500],
+      "typeVersion": 1,
+      "parameters": {
+        "keepOnlySet": false,
+        "values": [
+          {
+            "name": "ticket_id",
+            "stringValue": "=SUPP-{{ Date.now() }}"
+          },
+          {
+            "name": "assigned_to",
+            "stringValue": "support-queue"
+          },
+          {
+            "name": "escalation_level",
+            "stringValue": "={{ $json.priority === 'high' ? 1 : 2 }}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Store Response",
+      "type": "n8n-nodes-base.postgres",
+      "position": [1300, 300],
+      "typeVersion": 2,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO concierge_responses (request_id, response, action_taken) VALUES ($1, $2, $3) RETURNING *;",
+        "queryParams": "={{ $json.id }},{{ $json.response || $json.choices[0].message.content }},{{ $json.action_taken || 'processed' }}"
+      }
+    },
+    {
+      "name": "Update Request Status",
+      "type": "n8n-nodes-base.postgres",
+      "position": [1550, 300],
+      "typeVersion": 2,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE concierge_requests SET status = $1, updated_at = NOW() WHERE id = $2;",
+        "queryParams": "=processing,{{ $json.id }}"
+      }
+    },
+    {
+      "name": "Send Notification to User",
+      "type": "n8n-nodes-base.sendEmail",
+      "position": [1800, 300],
+      "typeVersion": 1,
+      "parameters": {
+        "fromEmail": "concierge@voice.thediscobass.com",
+        "toEmail": "={{ $json.user_email }}",
+        "subject": "Concierge Request Received - #{{ $json.id }}",
+        "htmlBody": "<h2>Hello!</h2><p>We've received your request and are working on it.</p><p>Request ID: {{ $json.id }}</p><p>Status: {{ $json.status }}</p>"
+      }
+    },
+    {
+      "name": "Return Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [2050, 300],
+      "typeVersion": 1,
+      "parameters": {
+        "responseCode": 202,
+        "respondWithOptions": {
+          "responseData": "responseNode"
+        },
+        "responseBody": "{{ { success: true, request_id: $json.id, status: 'processing', user_id: $json.user_id } }}"
+      }
+    },
+    {
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [550, 500],
+      "typeVersion": 1,
+      "parameters": {
+        "responseCode": 500,
+        "respondWithOptions": {
+          "responseData": "responseNode"
+        },
+        "responseBody": "{{ { error: 'Failed to process request', details: $json.error } }}"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook - Receive Request": {
+      "main": [
+        [
+          {
+            "node": "Parse Request Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Request Details": {
+      "main": [
+        [
+          {
+            "node": "Create Request Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Request Record": {
+      "main": [
+        [
+          {
+            "node": "Route by Request Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Request Type": {
+      "main": [
+        [
+          {
+            "node": "Process Booking Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Process Information Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Process Support Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Booking Request": {
+      "main": [
+        [
+          {
+            "node": "Store Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Information Request": {
+      "main": [
+        [
+          {
+            "node": "Store Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Support Request": {
+      "main": [
+        [
+          {
+            "node": "Store Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Response": {
+      "main": [
+        [
+          {
+            "node": "Update Request Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Request Status": {
+      "main": [
+        [
+          {
+            "node": "Send Notification to User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Notification to User": {
+      "main": [
+        [
+          {
+            "node": "Return Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "errorHandler": "n8n-nodes-base.errorTrigger",
+    "executionOrder": "v1"
+  }
+}
