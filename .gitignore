@@ -38,3 +38,10 @@ temp/
 
 # Other
 .cache
+
+# Terraform local artifacts
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/tfplan
+terraform/*.tfstate
+terraform/*.tfstate.*
