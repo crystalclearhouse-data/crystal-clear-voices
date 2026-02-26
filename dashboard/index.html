@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CrystalClearHouse Workflow Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; background: linear-gradient(135deg,#667eea 0%,#764ba2 100%); min-height:100vh; padding:36px 20px; }
+        .container{max-width:1200px;margin:0 auto}
+        header{text-align:center;color:#fff;margin-bottom:26px}
+        h1{font-size:28px}
+        .subtitle{opacity:.9}
+        .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:22px}
+        .stat-card{background:#fff;border-radius:10px;padding:14px;box-shadow:0 6px 18px rgba(2,6,23,0.08);text-align:center}
+        .stat-card h3{margin:0;font-size:12px;color:#64748b;text-transform:uppercase}
+        .stat-card .number{font-size:20px;font-weight:700;margin-top:6px;color:#334155}
+        .main-grid{display:grid;grid-template-columns:1fr 360px;gap:16px}
+        @media(max-width:900px){.main-grid{grid-template-columns:1fr}}
+        .card{background:#fff;border-radius:10px;padding:16px}
+        .filter-buttons{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+        .filter-btn{padding:8px 12px;border-radius:999px;border:1px solid #e6eef8;background:#fff;cursor:pointer}
+        .filter-btn.active{background:#667eea;color:#fff;border-color:#667eea}
+        .search-box{width:100%;padding:10px;border-radius:8px;border:1px solid #e6eef8;margin-bottom:12px}
+        .workflow-list{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow:auto}
+        .workflow-item{padding:10px;border-left:4px solid #e6eef8;border-radius:6px;background:#f8fafc}
+        .workflow-id{font-weight:700}
+        .workflow-meta{font-size:13px;color:#64748b}
+        .badge{display:inline-block;padding:4px 8px;border-radius:999px;font-weight:600;font-size:12px}
+        .badge.active{background:#d1fae5;color:#065f46}
+        .badge.testing{background:#fef3c7;color:#92400e}
+        .badge.unprocessed{background:#f5f3ff;color:#4c1d95}
+        .category-breakdown{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+        .category-item{background:#f0f4ff;padding:12px;border-radius:8px;text-align:center}
+        .category-item h4{margin:0;color:#334155;font-size:13px}
+        .category-item .count{font-size:18px;font-weight:700;margin-top:6px}
+        footer{margin-top:18px;color:#fff;text-align:center}
+        .empty-state{padding:24px;color:#999;text-align:center}
+        .chart-wrapper{height:260px}
+    </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🚀 CrystalClearHouse Workflows</h1>
+      <div class="subtitle">Local dashboard (reads <code>/workflows/index.json</code>)</div>
+    </header>
+
+    <div class="stats-grid">
+      <div class="stat-card"><h3>Total Workflows</h3><div class="number" id="total-workflows">—</div></div>
+      <div class="stat-card"><h3>Active</h3><div class="number" id="active-count">—</div></div>
+      <div class="stat-card"><h3>Testing</h3><div class="number" id="testing-count">—</div></div>
+      <div class="stat-card"><h3>Categories</h3><div class="number" id="category-count">—</div></div>
+    </div>
+
+    <div class="main-grid">
+      <div>
+        <div class="card">
+          <h2 style="margin:0 0 10px 0">📋 All Workflows</h2>
+          <input id="searchBox" class="search-box" placeholder="Search by id or name..." />
+          <div class="filter-buttons">
+            <button class="filter-btn active" data-filter="all">All</button>
+            <button class="filter-btn" data-filter="Production">Production</button>
+            <button class="filter-btn" data-filter="Agent Experiments">Agents</button>
+            <button class="filter-btn" data-filter="Connector Explorations">Connectors</button>
+            <button class="filter-btn" data-filter="Content Creation">Content</button>
+            <button class="filter-btn" data-filter="Infrastructure">Infrastructure</button>
+          </div>
+          <div id="workflow-list" class="workflow-list"></div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <h2 style="margin:0 0 10px 0">All Workflows Table</h2>
+          <div style="overflow:auto;max-height:320px">
+            <table style="width:100%;border-collapse:collapse">
+              <thead style="background:#f8fafc"><tr><th style="padding:8px;border-bottom:1px solid #eef2f7;text-align:left">ID</th><th style="padding:8px;border-bottom:1px solid #eef2f7;text-align:left">Name</th><th style="padding:8px;border-bottom:1px solid #eef2f7;text-align:left">Category</th><th style="padding:8px;border-bottom:1px solid #eef2f7;text-align:left">Status</th></tr></thead>
+              <tbody id="workflows-table-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card chart-wrapper">
+          <h2 style="margin:0 0 10px 0">📈 Status Distribution</h2>
+          <canvas id="statusChart"></canvas>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <h2 style="margin:0 0 10px 0">📊 Categories</h2>
+          <div id="category-breakdown" class="category-breakdown"></div>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      <div>Last Updated: <span id="last-updated">—</span></div>
+      <div style="font-size:12px;margin-top:6px">Serve project root (e.g. <code>npx http-server .</code>) to allow fetch to /workflows/index.json</div>
+    </footer>
+  </div>
+
+  <script>
+    const INDEX_PATH = '/workflows/index.json';
+    let allWorkflows = [];
+    let currentFilter = 'all';
+    let currentSearch = '';
+    let statusChart = null;
+    let lastWorkflowCount = -1;
+
+    const $ = sel => document.querySelector(sel);
+
+    function safeText(v){ return (v === undefined || v === null) ? '' : String(v); }
+
+    async function loadWorkflows(){
+      try{
+        const res = await fetch(INDEX_PATH, {cache:'no-store'});
+        if(!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        const newData = await res.json();
+        
+        // Only re-render if data actually changed
+        if(JSON.stringify(newData) !== JSON.stringify(allWorkflows)) {
+          allWorkflows = newData;
+          renderAll();
+        }
+      }catch(err){
+        console.error('loadWorkflows error', err);
+        const list = $('#workflow-list');
+        if(list) list.innerHTML = `<div class="empty-state">Error loading ${INDEX_PATH}: ${err.message || err}</div>`;
+      }
+    }
+
+    function updateStats(){
+      const total = allWorkflows.length;
+      const active = allWorkflows.filter(w => w.status === 'Active').length;
+      const testing = allWorkflows.filter(w => w.status === 'Testing').length;
+      const categories = new Set(allWorkflows.map(w => w.category || 'Other')).size;
+      $('#total-workflows').textContent = total;
+      $('#active-count').textContent = active;
+      $('#testing-count').textContent = testing;
+      $('#category-count').textContent = categories;
+      $('#last-updated').textContent = new Date().toLocaleString();
+    }
+
+    function renderCategoryBreakdown(){
+      const counts = allWorkflows.reduce((acc,w)=>{ const c = w.category || 'Other'; acc[c] = (acc[c]||0)+1; return acc; }, {});
+      const el = $('#category-breakdown');
+      el.innerHTML = Object.entries(counts).map(([cat,n])=>`<div class="category-item"><h4>${escapeHtml(cat)}</h4><div class="count">${n}</div></div>`).join('');
+    }
+
+    function escapeHtml(s){ return String(s).replace(/[&<>\"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+
+    function renderList(filtered){
+      const list = $('#workflow-list');
+      if(!filtered.length){ list.innerHTML = '<div class="empty-state">No workflows</div>'; return; }
+      list.innerHTML = filtered.map(w=>{
+        const st = safeText(w.status||'Unprocessed');
+        const cls = st.toLowerCase().replace(/\s+/g,'-');
+        return `<div class="workflow-item ${cls}"><div class="workflow-id">${escapeHtml(w.id)}</div><div class="workflow-meta"><span class="badge ${cls}">${escapeHtml(st)}</span> <span>${escapeHtml(w.category||'')}</span> <span>${escapeHtml(w.name||'')}</span></div></div>`;
+      }).join('');
+    }
+
+    function renderTable(filtered){
+      const tbody = $('#workflows-table-body');
+      tbody.innerHTML = filtered.map(w=>`<tr><td style="padding:8px;border-bottom:1px solid #eef2f7"><code>${escapeHtml(w.id)}</code></td><td style="padding:8px;border-bottom:1px solid #eef2f7">${escapeHtml(w.name||'')}</td><td style="padding:8px;border-bottom:1px solid #eef2f7">${escapeHtml(w.category||'')}</td><td style="padding:8px;border-bottom:1px solid #eef2f7">${escapeHtml(w.status||'Unprocessed')}</td></tr>`).join('');
+    }
+
+    function renderStatusChart(){
+      const statuses = allWorkflows.reduce((acc,w)=>{ const s = w.status || 'Unprocessed'; acc[s] = (acc[s]||0)+1; return acc; }, {});
+      const labels = Object.keys(statuses);
+      const data = labels.map(l=>statuses[l]);
+      
+      // Destroy any existing chart on this canvas via Chart.js registry
+      try {
+        if(Chart.helpers && Chart.helpers.getChart && Chart.helpers.getChart('statusChart')) {
+          Chart.helpers.getChart('statusChart').destroy();
+        }
+      } catch(e) {
+        // ignore if not found
+      }
+      
+      // Also try direct destroy if statusChart exists
+      if(statusChart && typeof statusChart.destroy === 'function'){
+        try{ statusChart.destroy(); }catch(e){ /* ignore */ }
+      }
+      
+      const canvas = document.getElementById('statusChart');
+      if(!canvas) return;
+      
+      const ctx = canvas.getContext('2d');
+      if(labels.length === 0){
+        ctx.clearRect(0,0,ctx.canvas.width,ctx.canvas.height);
+        statusChart = null;
+        return;
+      }
+      
+      // Create new chart
+      statusChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: { labels, datasets: [{ data, backgroundColor: ['#10b981','#f59e0b','#9ca3af','#ef4444'], borderColor: 'white', borderWidth: 2 }] },
+        options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}} }
+      });
+    }
+
+    function applyFilters(){
+      const q = (document.getElementById('searchBox').value || '').trim().toLowerCase();
+      const cat = currentFilter;
+      let filtered = allWorkflows.slice();
+      if(cat && cat !== 'all') filtered = filtered.filter(w => (w.category||'') === cat);
+      if(q) filtered = filtered.filter(w => ((w.id||'')+ ' ' + (w.name||'')).toLowerCase().includes(q));
+      renderList(filtered);
+      renderTable(filtered);
+    }
+
+    function renderAll(){
+      updateStats();
+      renderCategoryBreakdown();
+      renderStatusChart();
+      applyFilters();
+    }
+
+    // wire UI
+    document.getElementById('searchBox').addEventListener('input', e => { currentSearch = e.target.value; applyFilters(); });
+    document.querySelectorAll('.filter-btn').forEach(btn=>btn.addEventListener('click', e=>{
+      document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      currentFilter = btn.dataset.filter || 'all';
+      applyFilters();
+    }));
+
+    // initial load and periodic reload (every 5 minutes)
+    loadWorkflows();
+    setInterval(loadWorkflows, 300000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,198 @@
+[
+  {
+    "id": "sophie-engagement-webhook",
+    "name": "Sophie Engagement Webhook",
+    "category": "Production",
+    "status": "Active",
+    "path": "workflows/Production/sophie-engagement-webhook"
+  },
+  {
+    "id": "sophie-daily-tiktok-report",
+    "name": "Sophie Daily TikTok Report",
+    "category": "Production",
+    "status": "Active",
+    "path": "workflows/Production/sophie-daily-tiktok-report"
+  },
+  {
+    "id": "thesteezezone-email-signup",
+    "name": "TheSteezeZone Email Signup",
+    "category": "Production",
+    "status": "Active",
+    "path": "workflows/Production/thesteezezone-email-signup"
+  },
+  {
+    "id": "agent-zero",
+    "name": "Agent Zero",
+    "category": "Agent Experiments",
+    "status": "Testing",
+    "path": "workflows/Agent-Experiments/agent-zero"
+  },
+  {
+    "id": "sophie-trend-agent",
+    "name": "Sophie Trend Agent",
+    "category": "Agent Experiments",
+    "status": "Testing",
+    "path": "workflows/Agent-Experiments/sophie-trend-agent"
+  },
+  {
+    "id": "discoagents-social-traffic",
+    "name": "DiscoAgents Social Traffic",
+    "category": "Agent Experiments",
+    "status": "Testing",
+    "path": "workflows/Agent-Experiments/discoagents-social-traffic"
+  },
+  {
+    "id": "discoagents-orchestrator",
+    "name": "DiscoAgents Orchestrator",
+    "category": "Agent Experiments",
+    "status": "Testing",
+    "path": "workflows/Agent-Experiments/discoagents-orchestrator"
+  },
+  {
+    "id": "sophie-vault-check",
+    "name": "Sophie Vault Check",
+    "category": "Agent Experiments",
+    "status": "Testing",
+    "path": "workflows/Agent-Experiments/sophie-vault-check"
+  },
+  {
+    "id": "sophie-notion-connector-plan",
+    "name": "Sophie Notion Connector Plan",
+    "category": "Connector Explorations",
+    "status": "Testing",
+    "path": "workflows/Connector-Explorations/sophie-notion-connector-plan"
+  },
+  {
+    "id": "sophie-clickup-connector-plan",
+    "name": "Sophie ClickUp Connector Plan",
+    "category": "Connector Explorations",
+    "status": "Testing",
+    "path": "workflows/Connector-Explorations/sophie-clickup-connector-plan"
+  },
+  {
+    "id": "sophie-notion-stub",
+    "name": "Sophie Notion Stub",
+    "category": "Connector Explorations",
+    "status": "Testing",
+    "path": "workflows/Connector-Explorations/sophie-notion-stub"
+  },
+  {
+    "id": "sophie-clickup-stub",
+    "name": "Sophie ClickUp Stub",
+    "category": "Connector Explorations",
+    "status": "Testing",
+    "path": "workflows/Connector-Explorations/sophie-clickup-stub"
+  },
+  {
+    "id": "gumroad-claude-github",
+    "name": "Gumroad to Claude to GitHub",
+    "category": "Connector Explorations",
+    "status": "Testing",
+    "path": "workflows/Connector-Explorations/gumroad-claude-github"
+  },
+  {
+    "id": "nanobanana-video-creator",
+    "name": "NanoBanana video creator",
+    "category": "Content Creation",
+    "status": "Testing",
+    "path": "workflows/Content-Creation/nanobanana-video-creator"
+  },
+  {
+    "id": "sophie-ai-report-transform",
+    "name": "Sophie AI Report Transform",
+    "category": "Content Creation",
+    "status": "Testing",
+    "path": "workflows/Content-Creation/sophie-ai-report-transform"
+  },
+  {
+    "id": "sophie-repost-discord",
+    "name": "Sophie Repost Discord",
+    "category": "Content Creation",
+    "status": "Testing",
+    "path": "workflows/Content-Creation/sophie-repost-discord"
+  },
+  {
+    "id": "n8n-audit-report-generator",
+    "name": "n8n Audit Report Generator",
+    "category": "Infrastructure",
+    "status": "Active",
+    "path": "workflows/Infrastructure/n8n-audit-report-generator"
+  },
+  {
+    "id": "my-workflow-3",
+    "name": "My workflow 3",
+    "category": "Infrastructure",
+    "status": "Active",
+    "path": "workflows/Infrastructure/my-workflow-3"
+  },
+  {
+    "id": "unprocessed-01",
+    "name": "Unprocessed 01",
+    "category": "Other",
+    "status": "Unprocessed",
+    "path": "workflows/Other/unprocessed-01"
+  },
+  {
+    "id": "unprocessed-02",
+    "name": "Unprocessed 02",
+    "category": "Other",
+    "status": "Unprocessed",
+    "path": "workflows/Other/unprocessed-02"
+  },
+  {
+    "id": "unprocessed-03",
+    "name": "Unprocessed 03",
+    "category": "Other",
+    "status": "Unprocessed",
+    "path": "workflows/Other/unprocessed-03"
+  },
+  {
+    "id": "unprocessed-04",
+    "name": "Unprocessed 04",
+    "category": "Other",
+    "status": "Unprocessed",
+    "path": "workflows/Other/unprocessed-04"
+  },
+  {
+    "id": "unprocessed-05",
+    "name": "Unprocessed 05",
+    "category": "Other",
+    "status": "Unprocessed",
+    "path": "workflows/Other/unprocessed-05"
+  },
+  {
+    "id": "unprocessed-06",
+    "name": "Unprocessed 06",
+    "category": "Other",
+    "status": "Unprocessed",
+    "path": "workflows/Other/unprocessed-06"
+  },
+  {
+    "id": "unprocessed-07",
+    "name": "Unprocessed 07",
+    "category": "Other",
+    "status": "Unprocessed",
+    "path": "workflows/Other/unprocessed-07"
+  },
+  {
+    "id": "unprocessed-08",
+    "name": "Unprocessed 08",
+    "category": "Other",
+    "status": "Unprocessed",
+    "path": "workflows/Other/unprocessed-08"
+  },
+  {
+    "id": "unprocessed-09",
+    "name": "Unprocessed 09",
+    "category": "Other",
+    "status": "Unprocessed",
+    "path": "workflows/Other/unprocessed-09"
+  },
+  {
+    "id": "unprocessed-10",
+    "name": "Unprocessed 10",
+    "category": "Other",
+    "status": "Unprocessed",
+    "path": "workflows/Other/unprocessed-10"
+  }
+]
