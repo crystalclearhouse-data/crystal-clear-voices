@@ -1,0 +1,154 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // DEV STACK
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+      "label": "Dev: Start Full Stack",
+      "type": "shell",
+      "command": "bash ${workspaceFolder}/scripts/dev-up.sh",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "new", "focus": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Dev: Stop Full Stack",
+      "type": "shell",
+      "command": "bash ${workspaceFolder}/scripts/dev-down.sh",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // INDIVIDUAL SERVICES
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+      "label": "Service: voice-server",
+      "type": "shell",
+      "command": "cd ${workspaceFolder}/voice-server && npm start",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "new", "focus": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Service: api-server",
+      "type": "shell",
+      "command": "cd ${workspaceFolder}/api-server && npm start",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "new" },
+      "problemMatcher": []
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // DOCKER
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+      "label": "Docker: Compose Up",
+      "type": "shell",
+      "command": "docker-compose -f ${workspaceFolder}/docker-compose.yml up -d",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Docker: Compose Down",
+      "type": "shell",
+      "command": "docker-compose -f ${workspaceFolder}/docker-compose.yml down",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Docker: Build voice-server",
+      "type": "shell",
+      "command": "docker build -t crystal-clear-voice-server ${workspaceFolder}/voice-server",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // LOGS
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+      "label": "Logs: voice-server",
+      "type": "shell",
+      "command": "tail -f ${workspaceFolder}/.logs/voice-server.log",
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "new" },
+      "problemMatcher": [],
+      "isBackground": true
+    },
+    {
+      "label": "Logs: webhook-server",
+      "type": "shell",
+      "command": "tail -f ${workspaceFolder}/.logs/webhook-server.log",
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "new" },
+      "problemMatcher": [],
+      "isBackground": true
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // GIT / GITHUB
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+      "label": "Git: Status",
+      "type": "shell",
+      "command": "git -C ${workspaceFolder} status && git -C ${workspaceFolder} log --oneline -5",
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Git: Push origin main",
+      "type": "shell",
+      "command": "git -C ${workspaceFolder} push origin main",
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // BOOTSTRAP (SAFE) — see .agents/authority.md before modifying
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+      "label": "Bootstrap: GitHub Repo (Safe)",
+      "type": "shell",
+      "command": [
+        "set -e",
+        "cd ${workspaceFolder}",
+        "echo '--- Checking workspace boundary ---'",
+        "if [ ! -f '${workspaceFolder}/.agents/authority.md' ]; then echo 'ERROR: .agents/authority.md missing. Aborting.'; exit 1; fi",
+        "echo '--- Verifying .env is gitignored ---'",
+        "git check-ignore -q voice-server/.env || (echo 'ERROR: voice-server/.env is NOT gitignored!'; exit 1)",
+        "echo '--- Remote ---'",
+        "git remote -v",
+        "echo '--- Branch ---'",
+        "git branch -M main",
+        "echo '--- Push ---'",
+        "git push -u origin main",
+        "echo '✅ Bootstrap complete'"
+      ].join(" && "),
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "new", "focus": true },
+      "problemMatcher": []
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ENV CHECK
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+      "label": "Check: Env Vars",
+      "type": "shell",
+      "command": "bash ${workspaceFolder}/scripts/dev-up.sh --check-only 2>/dev/null || (cd ${workspaceFolder} && for v in ANTHROPIC_API_KEY ELEVENLABS_API_KEY TWILIO_ACCOUNT_SID PUBLIC_URL CREW_SERVICE_URL; do [ -z \"${!v}\" ] && echo \"  MISSING: $v\" || echo \"  OK: $v\"; done)",
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    }
+
+  ]
+}
