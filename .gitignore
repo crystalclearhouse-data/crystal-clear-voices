@@ -16,8 +16,8 @@ build/
 ._*
 
 # IDEs
-.vscode/
 .idea/
+.vscode/*.code-workspace
 *.swp
 *.swo
 *~
@@ -45,3 +45,8 @@ terraform/.terraform.lock.hcl
 terraform/tfplan
 terraform/*.tfstate
 terraform/*.tfstate.*
+terraform/terraform.tfvars
+
+# Runtime dirs
+.pids/
+.logs/

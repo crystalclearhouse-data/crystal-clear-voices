@@ -1,0 +1,90 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// SOCIAL MEDIA
+// ============================================================================
+
+model SocialMediaPost {
+  id         Int       @id @default(autoincrement())
+  platform   String
+  content    String
+  mediaUrls  String[]  @map("media_urls")
+  hashtags   String[]
+  postedAt   DateTime? @map("posted_at")
+  status     String    @default("draft")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  @@map("social_media_posts")
+}
+
+// ============================================================================
+// CONCIERGE
+// ============================================================================
+
+model ConciergeRequest {
+  id          Int                  @id @default(autoincrement())
+  requestId   String               @unique @map("request_id") @db.Uuid
+  userId      String               @map("user_id")
+  requestType String               @map("request_type")
+  description String?
+  priority    String               @default("normal")
+  status      String               @default("pending")
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+  responses   ConciergeResponse[]
+
+  @@map("concierge_requests")
+}
+
+model ConciergeResponse {
+  id          Int              @id @default(autoincrement())
+  requestId   Int              @map("request_id")
+  response    String?
+  actionTaken String?          @map("action_taken")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  request     ConciergeRequest @relation(fields: [requestId], references: [id])
+
+  @@map("concierge_responses")
+}
+
+// ============================================================================
+// VOICE / RESTAURANT ORDERS
+// ============================================================================
+
+model RestaurantOrder {
+  id               Int      @id @default(autoincrement())
+  callSid          String   @map("call_sid")
+  customerPhone    String   @map("customer_phone")
+  rawTranscript    String   @map("raw_transcript")
+  items            Json
+  pickupTime       String?  @map("pickup_time")
+  estimatedIntent  String   @map("estimated_intent")
+  crewJobId        String?  @map("crew_job_id")
+  status           String   @default("received")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@map("restaurant_orders")
+}
+
+// ============================================================================
+// API LOGGING
+// ============================================================================
+
+model ApiLog {
+  id         Int      @id @default(autoincrement())
+  method     String
+  endpoint   String
+  statusCode Int?     @map("status_code")
+  durationMs Int?     @map("duration_ms")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("api_logs")
+}
