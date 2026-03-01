@@ -53,3 +53,18 @@ output "db_password_secret" {
   value       = random_password.db_password.result
   sensitive   = true
 }
+
+output "twilio_voice_webhook_url" {
+  description = "Twilio voice webhook URL — paste into Twilio console → Phone Numbers → Voice"
+  value       = "${var.public_url}/twilio/voice"
+}
+
+output "twilio_sms_webhook_url" {
+  description = "Twilio SMS webhook URL — paste into Twilio console → Phone Numbers → Messaging"
+  value       = "${var.public_url}/twilio/sms"
+}
+
+output "public_url" {
+  description = "Canonical public base URL for this environment"
+  value       = var.public_url
+}

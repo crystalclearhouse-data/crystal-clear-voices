@@ -179,7 +179,7 @@ resource "aws_rds_cluster" "main" {
   db_subnet_group_name    = aws_db_subnet_group.main.name
   vpc_security_group_ids  = [aws_security_group.rds.id]
   skip_final_snapshot     = false
-  final_snapshot_identifier_prefix = "${var.project_name}-final-snapshot"
+  final_snapshot_identifier = "${var.project_name}-final-snapshot"
   backup_retention_period = 7
   preferred_backup_window = "03:00-04:00"
   preferred_maintenance_window = "sun:04:00-sun:05:00"
@@ -300,8 +300,8 @@ resource "aws_apigatewayv2_stage" "prod" {
   default_route_settings {
     logging_level            = "INFO"
     data_trace_enabled       = false
-    throttle_burst_limit     = 100
-    throttle_rate_limit      = 50
+    throttling_burst_limit   = 100
+    throttling_rate_limit    = 50
   }
 
   tags = {

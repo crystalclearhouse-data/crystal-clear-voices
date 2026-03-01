@@ -21,6 +21,11 @@ variable "domain_name" {
   type        = string
 }
 
+variable "public_url" {
+  description = "Public-facing base URL for Twilio webhooks (e.g. https://voice.thediscobass.com)"
+  type        = string
+}
+
 variable "vpc_id" {
   description = "VPC ID to deploy resources into"
   type        = string
