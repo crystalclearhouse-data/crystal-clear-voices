@@ -68,6 +68,17 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  crew-service:
+    build: ./crew-service
+    ports:
+      - "8000:8000"
+    env_file: ./voice-server/.env
+    environment:
+      SOPHIE_URL: http://voice-server:3001
+    restart: unless-stopped
+    depends_on:
+      - voice-server
+
 volumes:
   postgres-data:
   n8n-data:

@@ -123,6 +123,26 @@ log_info "webhook-server PID: $WEBHOOK_PID"
 
 health_check "http://localhost:3000/webhook/status" "webhook-server"
 
+# Start crew-service (Python/FastAPI/CrewAI)
+CREW_DIR="$ROOT_DIR/crew-service"
+if [ -d "$CREW_DIR" ]; then
+  log_info "Starting crew-service (port 8000)..."
+  lsof -ti :8000 | xargs kill -9 2>/dev/null || true
+  sleep 1
+  cd "$CREW_DIR"
+  if [ ! -d ".venv" ]; then
+    log_warn "crew-service/.venv not found — run: cd crew-service && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt"
+  else
+    source .venv/bin/activate
+    uvicorn main:app --host 0.0.0.0 --port 8000 \
+      > "$ROOT_DIR/.logs/crew-service.log" 2>&1 &
+    CREW_PID=$!
+    echo $CREW_PID > "$ROOT_DIR/.pids/crew-service.pid"
+    log_info "crew-service PID: $CREW_PID"
+    health_check "http://localhost:8000/health" "crew-service"
+  fi
+fi
+
 if command -v docker &> /dev/null; then
   N8N_DIR="$(dirname "$ROOT_DIR")/n8n-local"
   if [ -d "$N8N_DIR" ]; then
@@ -142,6 +162,7 @@ log_info ""
 log_info "=== Stack Running ==="
 log_info "voice-server   → http://localhost:3001/health"
 log_info "webhook-server → http://localhost:3000/webhook/status"
+log_info "crew-service   → http://localhost:8000/health"
 log_info "n8n            → http://localhost:5678"
 log_info ""
 log_info "Logs: tail -f .logs/voice-server.log"
