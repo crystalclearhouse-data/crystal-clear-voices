@@ -62,12 +62,15 @@
       }
     },
     "postgres": {
-      "command": "npx",
+      "command": "node",
       "args": [
-        "-y",
-        "@modelcontextprotocol/server-postgres",
-        "${SUPABASE_DB_URL}"
-      ]
+        "/Users/data-house/projects/crystalclearhouse-data/postgres-mcp.js"
+      ],
+      "env": {
+        "MCP_DB_URL": "${MCP_DB_URL}",
+        "POSTGRES_ALLOWED_TABLES": "${POSTGRES_ALLOWED_TABLES}",
+        "POSTGRES_MAX_ROWS": "${POSTGRES_MAX_ROWS}"
+      }
     },
     "social-media": {
       "command": "node",
