@@ -1,0 +1,294 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DiscoAgents Creator / Content Systems Intake Form",
+  "description": "Onboarding intake for creator brands and content-led businesses. Covers platforms, formats, tools, monetization, brand voice, and pipeline goals.",
+  "type": "object",
+  "required": [
+    "brand_name",
+    "contact_name",
+    "contact_email",
+    "platforms_active",
+    "primary_format",
+    "bottleneck_primary",
+    "bottleneck_description",
+    "outcome_30_days"
+  ],
+  "properties": {
+
+    "_meta": {
+      "type": "object",
+      "description": "Injected by n8n on submission — do not include in form.",
+      "properties": {
+        "submitted_at": { "type": "string", "format": "date-time" },
+        "source":       { "type": "string" }
+      }
+    },
+
+    "section_1": { "type": "string", "const": "Brand & Contact" },
+
+    "brand_name": {
+      "type": "string",
+      "title": "Brand or channel name",
+      "minLength": 1
+    },
+    "website": {
+      "type": "string",
+      "title": "Website or link-in-bio URL",
+      "format": "uri"
+    },
+    "contact_name": {
+      "type": "string",
+      "title": "Your name",
+      "minLength": 1
+    },
+    "contact_email": {
+      "type": "string",
+      "title": "Email address",
+      "format": "email"
+    },
+    "team_structure": {
+      "type": "string",
+      "title": "Who creates and manages content?",
+      "enum": [
+        "Solo creator",
+        "Creator + VA or editor",
+        "Small in-house team (2-5)",
+        "Agency-backed or outsourced"
+      ]
+    },
+
+    "section_2": { "type": "string", "const": "Platforms & Formats" },
+
+    "platforms_active": {
+      "type": "array",
+      "title": "Which platforms are you currently active on?",
+      "items": {
+        "type": "string",
+        "enum": [
+          "YouTube (long-form)",
+          "YouTube Shorts",
+          "TikTok",
+          "Instagram Reels",
+          "Instagram Feed",
+          "X / Twitter",
+          "LinkedIn",
+          "Facebook",
+          "Substack / Newsletter",
+          "Podcast",
+          "Patreon / Membership",
+          "Other"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "platforms_active_other": {
+      "type": "string",
+      "title": "Other platform (specify)"
+    },
+    "primary_format": {
+      "type": "string",
+      "title": "What is your primary content format?",
+      "enum": [
+        "Short-form video (< 3 min)",
+        "Long-form video (> 10 min)",
+        "Written / blog / newsletter",
+        "Audio / podcast",
+        "Mixed (video + written)"
+      ]
+    },
+    "publishing_frequency": {
+      "type": "string",
+      "title": "How often do you publish across all platforms combined?",
+      "enum": [
+        "Daily or more",
+        "3-6x per week",
+        "1-2x per week",
+        "A few times per month",
+        "Sporadic / no fixed cadence"
+      ]
+    },
+    "repurposing_today": {
+      "type": "string",
+      "title": "How do you currently repurpose content across platforms?",
+      "enum": [
+        "I don't — each platform gets original content",
+        "I manually clip / reformat for each platform",
+        "I use a tool or VA to repurpose",
+        "I have an automated pipeline"
+      ]
+    },
+
+    "section_3": { "type": "string", "const": "Current Tools" },
+
+    "tools_editing": {
+      "type": "array",
+      "title": "Video / content editing",
+      "items": {
+        "type": "string",
+        "enum": ["Premiere Pro", "Final Cut Pro", "DaVinci Resolve", "CapCut", "Descript", "Canva", "Other"]
+      },
+      "uniqueItems": true
+    },
+    "tools_editing_other": {
+      "type": "string",
+      "title": "Editing tool — other (specify)"
+    },
+    "tools_scheduling": {
+      "type": "array",
+      "title": "Scheduling and publishing",
+      "items": {
+        "type": "string",
+        "enum": ["Buffer", "Later", "Metricool", "Hootsuite", "SocialBee", "Native platform scheduler", "Other"]
+      },
+      "uniqueItems": true
+    },
+    "tools_scheduling_other": {
+      "type": "string",
+      "title": "Scheduling tool — other (specify)"
+    },
+    "tools_storage": {
+      "type": "array",
+      "title": "Asset storage",
+      "items": {
+        "type": "string",
+        "enum": ["Google Drive", "Dropbox", "Frame.io", "Notion", "Airtable", "Local only", "Other"]
+      },
+      "uniqueItems": true
+    },
+    "tools_storage_other": {
+      "type": "string",
+      "title": "Storage tool — other (specify)"
+    },
+    "tools_analytics": {
+      "type": "array",
+      "title": "Analytics and performance tracking",
+      "items": {
+        "type": "string",
+        "enum": ["Native platform analytics only", "Sprout Social", "Metricool", "Iconosquare", "Google Analytics", "Other"]
+      },
+      "uniqueItems": true
+    },
+    "tools_analytics_other": {
+      "type": "string",
+      "title": "Analytics tool — other (specify)"
+    },
+    "tools_calendar": {
+      "type": "string",
+      "title": "How do you manage your content calendar?",
+      "enum": [
+        "Notion",
+        "Airtable",
+        "Google Sheets",
+        "Trello / ClickUp / Asana",
+        "No formal calendar",
+        "Other"
+      ]
+    },
+
+    "section_4": { "type": "string", "const": "Monetization" },
+
+    "monetization_channels": {
+      "type": "array",
+      "title": "Active monetization channels",
+      "items": {
+        "type": "string",
+        "enum": [
+          "Platform ad revenue (AdSense, TikTok fund, etc.)",
+          "Brand sponsorships / deals",
+          "Affiliate / referral links",
+          "Memberships (Patreon, Substack paid)",
+          "Digital products (courses, presets, templates)",
+          "Physical merch",
+          "Services / coaching / consulting",
+          "None yet"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "monetization_goal": {
+      "type": "string",
+      "title": "What does success look like monetization-wise in 90 days?",
+      "maxLength": 400
+    },
+
+    "section_5": { "type": "string", "const": "Bottlenecks & Goals" },
+
+    "bottleneck_primary": {
+      "type": "string",
+      "title": "What is the biggest content ops bottleneck right now?",
+      "enum": [
+        "Publishing consistency — hard to stay on cadence",
+        "Repurposing — content dies on one platform",
+        "Analytics — no clear view of what's working",
+        "Monetization ops — deals, invoices, tracking are manual",
+        "Asset chaos — files everywhere, hard to find",
+        "Other"
+      ]
+    },
+    "bottleneck_primary_other": {
+      "type": "string",
+      "title": "Bottleneck — other (specify)"
+    },
+    "bottleneck_description": {
+      "type": "string",
+      "title": "Describe the bottleneck in detail — what breaks or takes too long?",
+      "maxLength": 600
+    },
+    "outcome_30_days": {
+      "type": "string",
+      "title": "What would a '10/10' outcome look like 30 days from now?",
+      "maxLength": 600
+    },
+
+    "section_6": { "type": "string", "const": "Brand Voice & Safety" },
+
+    "brand_tone": {
+      "type": "string",
+      "title": "How would you describe your brand voice?",
+      "enum": [
+        "Casual and conversational",
+        "Entertaining and energetic",
+        "Educational and authoritative",
+        "Inspirational and motivational",
+        "Professional and polished"
+      ]
+    },
+    "content_topics": {
+      "type": "string",
+      "title": "What topics / niches do you cover? (free text)",
+      "maxLength": 300
+    },
+    "content_prohibited": {
+      "type": "string",
+      "title": "Any topics or content types your brand must never post? (free text)",
+      "maxLength": 300
+    },
+    "brand_deal_restrictions": {
+      "type": "string",
+      "title": "Any active brand deals or exclusivity clauses we should know about? (free text)",
+      "maxLength": 300
+    },
+    "approval_workflow": {
+      "type": "string",
+      "title": "Who must approve content before it publishes?",
+      "enum": [
+        "Just me — solo approval",
+        "Me + one team member",
+        "Manager or agency must approve",
+        "No approval needed — auto-publish is fine for scheduled content"
+      ]
+    },
+    "platforms_restricted": {
+      "type": "string",
+      "title": "Are there any platforms or accounts we should NOT post to automatically? (free text)"
+    }
+
+  },
+
+  "if": {
+    "properties": { "bottleneck_primary": { "const": "Other" } }
+  },
+  "then": {
+    "required": ["bottleneck_primary_other"]
+  }
+}

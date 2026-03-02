@@ -49,7 +49,43 @@ Watches the Clients DB for new pages. Calls Claude to generate the full 6-sectio
 
 ---
 
-### 3. Social Media Agent (`social-media-agent.json`)
+### 3. Notion — Creator → Content Pipeline Blueprint (`creator-content-pipeline-blueprint.json`)
+
+Same AI-driven pattern as the infra spec, retuned for creator brands (TheDiscoBass, TheSteeleZone, creator clients). Generates a 6-section content systems spec focused on platform strategy, content pipelines, repurposing, brand voice, and launch plan.
+
+**Trigger:** Notion — page added to Creators DB
+
+**Env required:**
+- `NOTION_CREATORS_DB_ID` — Creator records DB
+- `NOTION_BLUEPRINTS_DB_ID` — shared Blueprints DB (add `Blueprint Type` select: Infra Spec / Content Pipeline)
+- `ANTHROPIC_API_KEY`, `CLAUDE_MODEL`, `NOTION_TOKEN`, `DISCORD_INTAKE_WEBHOOK_URL`
+
+**Creator intake schema:** `crew-service/configs/creator-intake-schema.json` — 6 sections covering brand/contact, platforms & formats, tools, monetization, bottlenecks, and brand voice/safety.
+
+**Blueprints DB columns to add (creator-specific):**
+- `Blueprint Type` (select): Infra Spec, Content Pipeline
+- `Platform Maturity` (select): Starting Out, Active, Scaling
+- `Brand Safety Level` (select): Open, Brand Deal Safe, Restricted
+- `Creator` (relation → Creators DB)
+
+**Blueprint page sections generated:**
+- Section 1: Content Snapshot (brand profile, platforms, tools, monetization, bottlenecks with categories, platform health)
+- Section 2: Content Goals (30-day, 90-day, constraints + brand deal restrictions)
+- Section 3: Content Stack (platform strategy with primary/secondary/experimental, stack by layer: calendar/editing/scheduling/storage/analytics, calendar structure)
+- Section 4: Priority Content Pipelines v1 (3 pipelines: trigger, platforms, tools, MCP tools, safety notes, effort)
+- Section 5: Brand Voice & Platform Rules (tone, core topics, prohibited, approval workflow, platform-specific rules, hard agent guardrails)
+- Section 6: 30-Day Content Pipeline Launch Plan (week-by-week todo checklist)
+
+**Key differences from Infra Spec:**
+- Section 5 is Brand Voice & Platform Rules (not Access & Security)
+- Agent guardrails enforced: SOCIAL_ALLOWED_PLATFORMS allow-list, SOCIAL_MAX_POST_LENGTH, no autonomous publish to restricted platforms, no brand deal content approval without human
+- Platform strategy drives priorities rather than cloud/compliance
+
+**Flow:** Notion trigger → Extract fields → Build Claude prompt → Claude API → Parse + build block arrays → Create Blueprint page → [Append S1+2 → S3 → S4 → S5+6 → Discord alert] + [Update Creator status + relation (parallel)]
+
+---
+
+### 4. Social Media Agent (`social-media-agent.json`)
 
 Handles content creation, scheduling, and posting across social media platforms.
 

@@ -1,0 +1,341 @@
+{
+  "name": "Notion — Creator → Content Pipeline Blueprint",
+
+  "meta": {
+    "description": "Triggers on new Creator record. Calls Claude to generate a 6-section content systems spec (platform snapshot, goals, content stack, priority pipelines, brand voice + platform rules, 30-day launch plan). Creates a structured Blueprint page via Notion API, then fires Discord alert.",
+    "env_required": [
+      "NOTION_CREATORS_DB_ID       — Creator records DB (trigger source)",
+      "NOTION_BLUEPRINTS_DB_ID     — Blueprints DB (same as infra spec)",
+      "ANTHROPIC_API_KEY",
+      "CLAUDE_MODEL                — e.g. claude-sonnet-4-6",
+      "NOTION_TOKEN                — Notion integration bearer token",
+      "DISCORD_INTAKE_WEBHOOK_URL"
+    ],
+    "notion_setup": [
+      "Creators DB: each record represents a creator brand. Columns used: Name (title), Platforms (multi_select), Primary Format (select), Team Structure (select), Bottleneck (select), Contact Email (email), Submitted At (date), Outcome 30d (rich_text), Brand Tone (select), Content Topics (rich_text), Prohibited (rich_text), Brand Deal Restrictions (rich_text), Approval Workflow (select), Restricted Platforms (rich_text), Monetization (multi_select), Tools Editing/Scheduling/Storage/Analytics (rich_text), Publishing Frequency (select), Blueprint (relation → Blueprints DB)",
+      "Blueprints DB: add Blueprint Type (select: Infra Spec / Content Pipeline) if you share one DB for both spec types. Status select must include Draft. Created From Intake checkbox.",
+      "Property key strings in Extract Creator Fields must match your actual Creators DB column names exactly."
+    ]
+  },
+
+  "nodes": [
+
+    {
+      "id": "notion-trigger",
+      "name": "Creators DB — New Page",
+      "type": "n8n-nodes-base.notionTrigger",
+      "typeVersion": 1,
+      "position": [0, 300],
+      "parameters": {
+        "event": "pageAddedToDatabase",
+        "databaseId": "={{ $env.NOTION_CREATORS_DB_ID }}"
+      },
+      "credentials": {
+        "notionApi": { "name": "Notion account" }
+      }
+    },
+
+    {
+      "id": "extract-creator",
+      "name": "Extract Creator Fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "parameters": {
+        "jsCode": "// Unpack Notion property objects.\n// ── Adjust property key strings to match your actual Creators DB column names ──\nconst p = $input.first().json.properties ?? {};\n\nconst text   = prop => prop?.rich_text?.[0]?.plain_text ?? prop?.title?.[0]?.plain_text ?? '';\nconst sel    = prop => prop?.select?.name ?? '';\nconst em     = prop => prop?.email ?? '';\nconst multi  = prop => (prop?.multi_select ?? []).map(s => s.name);\nconst dt     = prop => prop?.date?.start ?? '';\n\nconst c = {\n  page_id:                $input.first().json.id,\n  page_url:               $input.first().json.url,\n  brand_name:             text(p['Name'] ?? p['Brand']),\n  contact_name:           text(p['Contact Name']),\n  contact_email:          em(p['Contact Email']),\n  team_structure:         sel(p['Team Structure']),\n  platforms_active:       multi(p['Platforms']),\n  primary_format:         sel(p['Primary Format']),\n  publishing_frequency:   sel(p['Publishing Frequency']),\n  repurposing_today:      sel(p['Repurposing']),\n  tools_editing:          text(p['Tools — Editing']),\n  tools_scheduling:       text(p['Tools — Scheduling']),\n  tools_storage:          text(p['Tools — Storage']),\n  tools_analytics:        text(p['Tools — Analytics']),\n  tools_calendar:         sel(p['Content Calendar Tool']),\n  monetization_channels:  multi(p['Monetization']),\n  monetization_goal:      text(p['Monetization Goal']),\n  bottleneck_primary:     sel(p['Bottleneck']),\n  bottleneck_description: text(p['Bottleneck Description']),\n  outcome_30d:            text(p['Outcome 30d']),\n  brand_tone:             sel(p['Brand Tone']),\n  content_topics:         text(p['Content Topics']),\n  content_prohibited:     text(p['Prohibited']),\n  brand_deal_restrictions:text(p['Brand Deal Restrictions']),\n  approval_workflow:      sel(p['Approval Workflow']),\n  platforms_restricted:   text(p['Restricted Platforms']),\n  submitted_at:           dt(p['Submitted At']),\n};\n\nreturn [{ json: c }];"
+      }
+    },
+
+    {
+      "id": "build-prompt",
+      "name": "Build Claude Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300],
+      "parameters": {
+        "jsCode": "const c = $input.first().json;\n\nconst toolsStr = [\n  c.tools_editing    && `Editing: ${c.tools_editing}`,\n  c.tools_scheduling && `Scheduling: ${c.tools_scheduling}`,\n  c.tools_storage    && `Storage: ${c.tools_storage}`,\n  c.tools_analytics  && `Analytics: ${c.tools_analytics}`,\n  c.tools_calendar   && `Content calendar: ${c.tools_calendar}`,\n].filter(Boolean).join('\\n');\n\nconst platformsStr  = (c.platforms_active || []).join(', ');\nconst monetStr      = (c.monetization_channels || []).join(', ');\n\n// Brand slug for environment/project naming\nconst slug = (c.brand_name || 'creator').toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 24);\n\nconst prompt = `You are an expert creator operations architect. Based on this creator intake, generate a content systems blueprint as structured JSON. Be specific — this drives a real pipeline build, not a generic plan.\n\nCREATOR INTAKE DATA:\nBrand: ${c.brand_name}\nTeam: ${c.team_structure}\nPlatforms active: ${platformsStr}\nPrimary format: ${c.primary_format}\nPublishing frequency: ${c.publishing_frequency}\nRepurposing today: ${c.repurposing_today}\nMonetization: ${monetStr}\nMonetization goal (90d): ${c.monetization_goal || 'not specified'}\nPrimary bottleneck: ${c.bottleneck_primary}\nBottleneck detail: ${c.bottleneck_description}\nDesired 30-day outcome: ${c.outcome_30d}\nBrand tone: ${c.brand_tone}\nContent topics: ${c.content_topics || 'not specified'}\nProhibited topics: ${c.content_prohibited || 'none stated'}\nBrand deal restrictions: ${c.brand_deal_restrictions || 'none'}\nApproval workflow: ${c.approval_workflow}\nRestricted platforms (no auto-post): ${c.platforms_restricted || 'none'}\n\nTools:\\n${toolsStr || 'not specified'}\n\nReturn ONLY a raw JSON object (no markdown fences, no explanation). Use this exact schema:\n{\n  \"platform_maturity\": \"Starting Out | Active | Scaling\",\n  \"primary_focus\": [\"one or more of: Short-form Video, Long-form Video, Newsletter, Podcasting, Social Growth, Monetization, Repurposing\"],\n  \"brand_safety_level\": \"Open | Brand Deal Safe | Restricted\",\n  \"brand_snapshot\": [\n    \"Primary platform and audience size/stage bullet\",\n    \"Content format mix and publishing cadence bullet\",\n    \"Monetization stage and primary revenue channel bullet\"\n  ],\n  \"bottlenecks\": [\n    { \"text\": \"specific bottleneck description\", \"category\": \"Publishing | Repurposing | Analytics | Monetization | Asset Ops\" },\n    { \"text\": \"...\", \"category\": \"...\" },\n    { \"text\": \"...\", \"category\": \"...\" }\n  ],\n  \"platform_health_notes\": \"1-2 sentences on gaps — underserved platforms, inconsistent cadence, missed repurposing opportunities\",\n  \"outcomes_30d\": [\"specific, measurable outcome 1\", \"outcome 2\", \"outcome 3\"],\n  \"outcomes_90d\": [\"specific, measurable outcome 1\", \"outcome 2\", \"outcome 3\"],\n  \"constraints\": [\"content or platform constraint from brand deals, approval workflow, or platform policy\"],\n  \"platform_strategy\": {\n    \"primary\": \"single platform to focus on first\",\n    \"secondary\": [\"platform to repurpose to\", \"...\"],\n    \"experimental\": [\"new platform to test\"],\n    \"reason\": \"one sentence on why this priority order\"\n  },\n  \"content_stack\": [\n    { \"layer\": \"Calendar\", \"tool\": \"recommended tool\", \"purpose\": \"one-line purpose\", \"notes\": \"any setup or safety note\" },\n    { \"layer\": \"Editing\", \"tool\": \"recommended tool\", \"purpose\": \"one-line purpose\", \"notes\": \"note\" },\n    { \"layer\": \"Scheduling\", \"tool\": \"recommended tool\", \"purpose\": \"one-line purpose\", \"notes\": \"note\" },\n    { \"layer\": \"Storage\", \"tool\": \"recommended tool\", \"purpose\": \"one-line purpose\", \"notes\": \"note\" },\n    { \"layer\": \"Analytics\", \"tool\": \"recommended tool\", \"purpose\": \"one-line purpose\", \"notes\": \"note\" }\n  ],\n  \"pipelines\": [\n    {\n      \"number\": \"4.1\",\n      \"category\": \"Publishing | Repurposing | Analytics | Monetization | Asset Ops\",\n      \"name\": \"Short name (3-5 words)\",\n      \"goal\": \"one sentence\",\n      \"trigger\": \"what event or schedule fires this pipeline\",\n      \"platforms\": [\"platform names involved\"],\n      \"tools\": [\"tool names\"],\n      \"mcp_tools\": [\"specific MCP tool names e.g. social_post_all, n8n_run_workflow\"],\n      \"safety_notes\": \"what the agent must NOT do autonomously — what requires human approval\",\n      \"effort\": \"Low | Medium | High\"\n    },\n    { \"number\": \"4.2\", \"category\": \"Repurposing\", \"name\": \"...\", \"goal\": \"...\", \"trigger\": \"...\", \"platforms\": [\"...\"], \"tools\": [\"...\"], \"mcp_tools\": [\"...\"], \"safety_notes\": \"...\", \"effort\": \"Medium\" },\n    { \"number\": \"4.3\", \"category\": \"Analytics\", \"name\": \"...\", \"goal\": \"...\", \"trigger\": \"...\", \"platforms\": [\"...\"], \"tools\": [\"...\"], \"mcp_tools\": [\"...\"], \"safety_notes\": \"...\", \"effort\": \"Low\" }\n  ],\n  \"brand_voice\": {\n    \"tone\": \"brief description of voice and style\",\n    \"topics\": [\"core topic 1\", \"core topic 2\", \"core topic 3\"],\n    \"prohibited\": [\"topic or content type to never post\"],\n    \"approval_required\": \"always | scheduled-content-ok | never\",\n    \"notes\": \"any brand deal or exclusivity constraint the agent must enforce\"\n  },\n  \"platform_rules\": [\n    { \"platform\": \"platform name\", \"best_times\": \"posting time recommendation\", \"hashtag_strategy\": \"brief\", \"format_notes\": \"aspect ratio, length, etc.\", \"restrictions\": \"any content policy constraint\" }\n  ],\n  \"agent_guardrails\": [\n    \"Agent must never publish to [restricted platform] without human confirmation\",\n    \"Agent must never post content mentioning [prohibited topics]\",\n    \"Agent must never approve brand deal content — route to human for final sign-off\",\n    \"Agent must always apply SOCIAL_ALLOWED_PLATFORMS allow-list before any post action\",\n    \"Agent must never modify, delete, or repost published content without explicit instruction\"\n  ]\n}`;\n\nreturn [{ json: { prompt, creator: c } }];"
+      }
+    },
+
+    {
+      "id": "claude-call",
+      "name": "Claude — Generate Content Blueprint",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key",         "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version",  "value": "2023-06-01" },
+            { "name": "content-type",       "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ model: ($env.CLAUDE_MODEL || 'claude-sonnet-4-6'), max_tokens: 4096, messages: [{ role: 'user', content: $json.prompt }] }) }}"
+      }
+    },
+
+    {
+      "id": "parse-blueprint",
+      "name": "Parse Blueprint + Build Blocks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 300],
+      "parameters": {
+        "jsCode": "// ── Parse Claude response ────────────────────────────────────────────\nlet b;\ntry {\n  const raw = $input.first().json.content[0].text.trim();\n  const clean = raw.startsWith('```') ? raw.replace(/^```[a-z]*\\n?/, '').replace(/\\n?```$/, '') : raw;\n  b = JSON.parse(clean);\n} catch (e) {\n  b = {\n    platform_maturity: 'Active', primary_focus: ['Other'], brand_safety_level: 'Open',\n    brand_snapshot: ['Brand snapshot pending review.', '', ''],\n    bottlenecks: [{ text: 'Bottleneck details — see linked Creator page.', category: 'Publishing' }],\n    platform_health_notes: 'Platform health to be confirmed during onboarding call.',\n    outcomes_30d: ['30-day outcomes to be confirmed.', '', ''],\n    outcomes_90d: ['90-day outcomes to be confirmed.', '', ''],\n    constraints: ['Constraints to be confirmed.'],\n    platform_strategy: { primary: 'TBD', secondary: [], experimental: [], reason: 'TBD' },\n    content_stack: [\n      { layer: 'Calendar', tool: 'Notion', purpose: 'Content planning', notes: 'TBD' },\n      { layer: 'Editing', tool: 'TBD', purpose: 'TBD', notes: '' },\n      { layer: 'Scheduling', tool: 'TBD', purpose: 'TBD', notes: '' },\n      { layer: 'Storage', tool: 'TBD', purpose: 'TBD', notes: '' },\n      { layer: 'Analytics', tool: 'TBD', purpose: 'TBD', notes: '' },\n    ],\n    pipelines: [\n      { number: '4.1', category: 'Publishing', name: 'Pipeline 1 TBD', goal: 'TBD', trigger: 'TBD', platforms: ['TBD'], tools: ['TBD'], mcp_tools: ['TBD'], safety_notes: 'TBD', effort: 'Medium' },\n      { number: '4.2', category: 'Repurposing', name: 'Pipeline 2 TBD', goal: 'TBD', trigger: 'TBD', platforms: ['TBD'], tools: ['TBD'], mcp_tools: ['TBD'], safety_notes: 'TBD', effort: 'Medium' },\n      { number: '4.3', category: 'Analytics', name: 'Pipeline 3 TBD', goal: 'TBD', trigger: 'TBD', platforms: ['TBD'], tools: ['TBD'], mcp_tools: ['TBD'], safety_notes: 'TBD', effort: 'Low' },\n    ],\n    brand_voice: { tone: 'TBD', topics: ['TBD'], prohibited: ['TBD'], approval_required: 'always', notes: 'TBD' },\n    platform_rules: [],\n    agent_guardrails: [\n      'Agent must never post to restricted platforms without human confirmation.',\n      'Agent must always apply SOCIAL_ALLOWED_PLATFORMS allow-list.',\n      'Agent must never approve brand deal content — route to human.',\n    ],\n  };\n}\n\nconst c = $('Extract Creator Fields').item.json;\n\n// ── Block helpers (Notion API format) ─────────────────────────────────\nconst rt    = t => [{ type: 'text', text: { content: String(t || ' ') } }];\nconst h1    = t => ({ object: 'block', type: 'heading_1',          heading_1:          { rich_text: rt(t) } });\nconst h3    = t => ({ object: 'block', type: 'heading_3',          heading_3:          { rich_text: rt(t) } });\nconst para  = t => ({ object: 'block', type: 'paragraph',          paragraph:          { rich_text: rt(t) } });\nconst bul   = t => ({ object: 'block', type: 'bulleted_list_item', bulleted_list_item: { rich_text: rt(t) } });\nconst todo  = (t, chk = false) => ({ object: 'block', type: 'to_do', to_do: { rich_text: rt(t), checked: chk } });\nconst call  = (t, emoji = 'ℹ️') => ({ object: 'block', type: 'callout', callout: { rich_text: rt(t), icon: { type: 'emoji', emoji } } });\nconst div   = () => ({ object: 'block', type: 'divider', divider: {} });\n\n// Brand safety level map\nconst safetyMap = {\n  'Open': 'Open',\n  'Brand Deal Safe': 'Brand Deal Safe',\n  'Restricted': 'Restricted',\n};\nconst safetyLevel = b.brand_safety_level || 'Open';\n\n// Tool list from intake\nconst toolLines = [\n  c.tools_editing    && `Editing: ${c.tools_editing}`,\n  c.tools_scheduling && `Scheduling: ${c.tools_scheduling}`,\n  c.tools_storage    && `Storage: ${c.tools_storage}`,\n  c.tools_analytics  && `Analytics: ${c.tools_analytics}`,\n  c.tools_calendar   && `Content calendar: ${c.tools_calendar}`,\n].filter(Boolean);\n\nconst platformStr = (c.platforms_active || []).join(', ');\nconst monetStr    = (c.monetization_channels || []).join(', ');\n\n// ── SECTION 1 + 2: Content Snapshot + Goals ───────────────────────────\nconst s12 = [\n  call('Auto-generated from creator intake. Review before sharing with creator.', '🤖'),\n  div(),\n  h1('1. Current State (Content Snapshot)'),\n  h3('Brand Profile'),\n  ...b.brand_snapshot.filter(Boolean).map(bul),\n  bul(`Approval workflow: ${c.approval_workflow || 'not specified'}`),\n  h3('Platforms Active'),\n  bul(platformStr || 'No platforms specified.'),\n  bul(`Publishing frequency: ${c.publishing_frequency || 'not specified'}`),\n  bul(`Repurposing today: ${c.repurposing_today || 'not specified'}`),\n  h3('Current Tools'),\n  ...(toolLines.length ? toolLines.map(bul) : [para('No tools specified in intake.')]),\n  h3('Monetization'),\n  bul(monetStr || 'No monetization channels specified.'),\n  bul(`Monetization goal (90d): ${c.monetization_goal || 'not specified'}`),\n  h3('Content Operations Bottlenecks'),\n  ...b.bottlenecks.map(bt => bul(`[${bt.category}] ${bt.text}`)),\n  h3('Platform Health'),\n  para(b.platform_health_notes),\n  div(),\n  h1('2. Content Goals (30–90 Days)'),\n  h3('30-Day Outcomes'),\n  ...b.outcomes_30d.filter(Boolean).map(bul),\n  h3('90-Day Outcomes'),\n  ...b.outcomes_90d.filter(Boolean).map(bul),\n  h3('Constraints / Non-Negotiables'),\n  ...(b.constraints.length ? b.constraints.map(bul) : [para('No constraints stated.')]),\n  ...(c.brand_deal_restrictions ? [bul(`Brand deal restrictions: ${c.brand_deal_restrictions}`)] : []),\n  ...(c.platforms_restricted ? [bul(`Restricted platforms (no auto-post): ${c.platforms_restricted}`)] : []),\n  div(),\n];\n\n// ── SECTION 3: Content Stack ──────────────────────────────────────────\nconst strat = b.platform_strategy || {};\nconst s3 = [\n  h1('3. Recommended Content Stack'),\n  h3('3.1 Platform Strategy'),\n  bul(`Primary (build depth here first): ${strat.primary || 'TBD'}`),\n  bul(`Secondary (repurpose to): ${(strat.secondary || []).join(', ') || 'TBD'}`),\n  bul(`Experimental (test & measure): ${(strat.experimental || []).join(', ') || 'none'}`),\n  bul(`Rationale: ${strat.reason || 'TBD'}`),\n  h3('3.2 Content Stack by Layer'),\n  para('[shared] = DiscoAgents managed   [creator] = creator-owned account / subscription'),\n  ...(b.content_stack || []).map(row =>\n    bul(`[creator] ${row.layer}: ${row.tool} — ${row.purpose}${row.notes ? ' · ' + row.notes : ''}`)\n  ),\n  h3('3.3 Content Calendar Structure'),\n  bul(`Calendar tool: ${c.tools_calendar || strat.calendar_tool || 'Notion (recommended)'}`),\n  bul('Columns: Title, Format, Platform(s), Publish Date, Status (Idea / Scripted / Filmed / Edited / Scheduled / Live), Asset Link'),\n  bul('One row per piece of content. Repurposed versions linked as sub-items.'),\n  div(),\n];\n\n// ── SECTION 4: Priority Pipelines ────────────────────────────────────\nconst s4 = [h1('4. Priority Content Pipelines (v1)')];\nfor (const p of (b.pipelines || []).slice(0, 3)) {\n  s4.push(\n    h3(`${p.number} [${p.category}] – ${p.name}  ·  Effort: ${p.effort}`),\n    bul(`Goal: ${p.goal}`),\n    bul(`Trigger: ${p.trigger}`),\n    bul(`Platforms: ${(p.platforms || []).join(', ')}`),\n    bul(`Tools: ${(p.tools || []).join(', ')}`),\n    bul(`MCP tools: ${(p.mcp_tools || []).join(', ')}`),\n    bul(`Safety: ${p.safety_notes}`),\n  );\n}\ns4.push(\n  div(),\n  call('v1 limit: 3 pipelines buildable in 30 days. Validate performance before adding v2 automations.', '⚠️'),\n  div(),\n);\n\n// ── SECTION 5 + 6: Brand Voice + Launch Plan ──────────────────────────\nconst bv = b.brand_voice || {};\nconst pipelineName = i => (b.pipelines && b.pipelines[i]) ? b.pipelines[i].name : `Pipeline ${i + 1} TBD`;\n\nconst s56 = [\n  h1('5. Brand Voice & Platform Rules'),\n  h3('Brand Voice'),\n  bul(`Tone: ${bv.tone || c.brand_tone || 'not specified'}`),\n  bul(`Core topics: ${(bv.topics || []).join(', ') || c.content_topics || 'not specified'}`),\n  bul(`Prohibited: ${(bv.prohibited || []).join(', ') || c.content_prohibited || 'none stated'}`),\n  bul(`Approval required: ${bv.approval_required || c.approval_workflow || 'always'}`),\n  ...(bv.notes ? [bul(`Notes: ${bv.notes}`)] : []),\n  h3('Platform-Specific Rules'),\n  ...((b.platform_rules || []).length\n    ? b.platform_rules.map(r =>\n        bul(`${r.platform}: post at ${r.best_times} · hashtags: ${r.hashtag_strategy} · format: ${r.format_notes}${r.restrictions ? ' · restriction: ' + r.restrictions : ''}`)\n      )\n    : [para('Platform rules to be filled in after intake review.')]\n  ),\n  h3('Agent Guardrails'),\n  call('These rules are hard constraints — the agent must enforce them on every run.', '🔒'),\n  ...(b.agent_guardrails || []).map(g => bul(g)),\n  bul('Agent must always check SOCIAL_ALLOWED_PLATFORMS allow-list before any publish action.'),\n  bul('Agent must always check SOCIAL_MAX_POST_LENGTH before submitting any caption or post body.'),\n  bul('Agent must log all publish actions to MCP audit trail (.logs/mcp-audit.log).'),\n  div(),\n  h1('6. 30-Day Content Pipeline Launch Plan'),\n  h3('Week 1 – Foundation'),\n  todo('Connect platform accounts: verify OAuth tokens for all active platforms in SOCIAL_ALLOWED_PLATFORMS'),\n  todo('Import content calendar template into ' + (c.tools_calendar || 'Notion') + ' and populate with 30 days of planned content'),\n  todo('Set up asset storage: naming convention, folder structure, shared access for team'),\n  todo('Configure SOCIAL_ALLOWED_PLATFORMS, SOCIAL_MAX_POST_LENGTH env vars and test allow-list enforcement'),\n  todo('Set up Discord alert channel for all pipeline run notifications and errors'),\n  h3('Week 2 – Wire Core Pipelines'),\n  todo(`Build Pipeline 4.1: ${pipelineName(0)} — full end-to-end with human approval gate and Discord status alert`),\n  todo(`Build Pipeline 4.2: ${pipelineName(1)} — full end-to-end`),\n  todo('Test approval workflow: confirm all restricted-platform posts require manual confirmation before publish'),\n  todo('Validate brand safety: run test posts through prohibited-topic filter'),\n  todo('Spot-check MCP audit log after first live pipeline runs'),\n  h3('Week 3–4 – Hardening & Handoff'),\n  todo(`Build Pipeline 4.3: ${pipelineName(2)} — full end-to-end`),\n  todo('Performance review: pull first analytics data, validate against 30-day outcome targets'),\n  todo('Tune publishing schedule and repurposing rules based on early data'),\n  todo('Write creator runbook: how to add new content, pause a pipeline, and escalate issues'),\n  todo('Final sign-off: creator confirms live pipelines are hitting consistency and quality bar'),\n  div(),\n  call(`Auto-generated from creator intake (${c.submitted_at ? c.submitted_at.slice(0, 10) : 'date unknown'}). Generated: ${new Date().toISOString().slice(0, 10)}.`, '📋'),\n];\n\nreturn [{\n  json: {\n    s12:              JSON.stringify({ children: s12 }),\n    s3:               JSON.stringify({ children: s3 }),\n    s4:               JSON.stringify({ children: s4 }),\n    s56:              JSON.stringify({ children: s56 }),\n    blueprint_title:  `${c.brand_name} – Content Pipeline Blueprint v1`,\n    platform_maturity: b.platform_maturity,\n    primary_focus:    b.primary_focus,\n    brand_safety_level: safetyLevel,\n    creator_page_id:  c.page_id,\n    creator:          c,\n  }\n}];"
+      }
+    },
+
+    {
+      "id": "create-blueprint-page",
+      "name": "Create Blueprint Page",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2,
+      "position": [1200, 300],
+      "parameters": {
+        "operation": "create",
+        "resource": "databasePage",
+        "databaseId": "={{ $env.NOTION_BLUEPRINTS_DB_ID }}",
+        "title": "={{ $json.blueprint_title }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Creator",
+              "type": "relation",
+              "relationValue": "=[{ \"id\": \"{{ $json.creator_page_id }}\" }]"
+            },
+            {
+              "key": "Status",
+              "type": "select",
+              "selectValue": "Draft"
+            },
+            {
+              "key": "Blueprint Type",
+              "type": "select",
+              "selectValue": "Content Pipeline"
+            },
+            {
+              "key": "Primary Focus",
+              "type": "multi_select",
+              "multiSelectValue": "={{ $json.primary_focus }}"
+            },
+            {
+              "key": "Platform Maturity",
+              "type": "select",
+              "selectValue": "={{ $json.platform_maturity }}"
+            },
+            {
+              "key": "Brand Safety Level",
+              "type": "select",
+              "selectValue": "={{ $json.brand_safety_level }}"
+            },
+            {
+              "key": "Created From Intake",
+              "type": "checkbox",
+              "checkboxValue": true
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "notionApi": { "name": "Notion account" }
+      }
+    },
+
+    {
+      "id": "append-s12",
+      "name": "Append Sections 1+2 — Snapshot + Goals",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 160],
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ 'https://api.notion.com/v1/blocks/' + $('Create Blueprint Page').item.json.id + '/children' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization",  "value": "={{ 'Bearer ' + $env.NOTION_TOKEN }}" },
+            { "name": "Notion-Version", "value": "2022-06-28" },
+            { "name": "Content-Type",   "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $('Parse Blueprint + Build Blocks').item.json.s12 }}"
+      }
+    },
+
+    {
+      "id": "append-s3",
+      "name": "Append Section 3 — Content Stack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1680, 160],
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ 'https://api.notion.com/v1/blocks/' + $('Create Blueprint Page').item.json.id + '/children' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization",  "value": "={{ 'Bearer ' + $env.NOTION_TOKEN }}" },
+            { "name": "Notion-Version", "value": "2022-06-28" },
+            { "name": "Content-Type",   "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $('Parse Blueprint + Build Blocks').item.json.s3 }}"
+      }
+    },
+
+    {
+      "id": "append-s4",
+      "name": "Append Section 4 — Content Pipelines",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1920, 160],
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ 'https://api.notion.com/v1/blocks/' + $('Create Blueprint Page').item.json.id + '/children' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization",  "value": "={{ 'Bearer ' + $env.NOTION_TOKEN }}" },
+            { "name": "Notion-Version", "value": "2022-06-28" },
+            { "name": "Content-Type",   "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $('Parse Blueprint + Build Blocks').item.json.s4 }}"
+      }
+    },
+
+    {
+      "id": "append-s56",
+      "name": "Append Sections 5+6 — Brand Voice + Launch Plan",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2160, 160],
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ 'https://api.notion.com/v1/blocks/' + $('Create Blueprint Page').item.json.id + '/children' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization",  "value": "={{ 'Bearer ' + $env.NOTION_TOKEN }}" },
+            { "name": "Notion-Version", "value": "2022-06-28" },
+            { "name": "Content-Type",   "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $('Parse Blueprint + Build Blocks').item.json.s56 }}"
+      }
+    },
+
+    {
+      "id": "update-creator-status",
+      "name": "Update Creator — Status + Blueprint Relation",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2,
+      "position": [1440, 440],
+      "parameters": {
+        "operation": "update",
+        "resource": "databasePage",
+        "pageId": "={{ $('Parse Blueprint + Build Blocks').item.json.creator_page_id }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Status",
+              "type": "select",
+              "selectValue": "Blueprint drafted"
+            },
+            {
+              "key": "Blueprint",
+              "type": "relation",
+              "relationValue": "=[{ \"id\": \"{{ $('Create Blueprint Page').item.json.id }}\" }]"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "notionApi": { "name": "Notion account" }
+      }
+    },
+
+    {
+      "id": "discord-alert",
+      "name": "Discord — Creator Blueprint Created",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2400, 160],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DISCORD_INTAKE_WEBHOOK_URL }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "content",
+              "value": "={{ '🎬 **Content Blueprint drafted: ' + $(\\'Parse Blueprint + Build Blocks\\').item.json.blueprint_title + '**\\n> Platform maturity: ' + $(\\'Parse Blueprint + Build Blocks\\').item.json.platform_maturity + '  |  Brand safety: ' + $(\\'Parse Blueprint + Build Blocks\\').item.json.brand_safety_level + '\\n> Creator page: ' + $(\\'Extract Creator Fields\\').item.json.page_url + '\\n> Blueprint: ' + $(\\'Create Blueprint Page\\').item.json.url }}"
+            }
+          ]
+        }
+      }
+    }
+
+  ],
+
+  "connections": {
+    "Creators DB — New Page": {
+      "main": [[{ "node": "Extract Creator Fields", "type": "main", "index": 0 }]]
+    },
+    "Extract Creator Fields": {
+      "main": [[{ "node": "Build Claude Prompt", "type": "main", "index": 0 }]]
+    },
+    "Build Claude Prompt": {
+      "main": [[{ "node": "Claude — Generate Content Blueprint", "type": "main", "index": 0 }]]
+    },
+    "Claude — Generate Content Blueprint": {
+      "main": [[{ "node": "Parse Blueprint + Build Blocks", "type": "main", "index": 0 }]]
+    },
+    "Parse Blueprint + Build Blocks": {
+      "main": [[{ "node": "Create Blueprint Page", "type": "main", "index": 0 }]]
+    },
+    "Create Blueprint Page": {
+      "main": [
+        [
+          { "node": "Append Sections 1+2 — Snapshot + Goals",         "type": "main", "index": 0 },
+          { "node": "Update Creator — Status + Blueprint Relation",    "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Append Sections 1+2 — Snapshot + Goals": {
+      "main": [[{ "node": "Append Section 3 — Content Stack", "type": "main", "index": 0 }]]
+    },
+    "Append Section 3 — Content Stack": {
+      "main": [[{ "node": "Append Section 4 — Content Pipelines", "type": "main", "index": 0 }]]
+    },
+    "Append Section 4 — Content Pipelines": {
+      "main": [[{ "node": "Append Sections 5+6 — Brand Voice + Launch Plan", "type": "main", "index": 0 }]]
+    },
+    "Append Sections 5+6 — Brand Voice + Launch Plan": {
+      "main": [[{ "node": "Discord — Creator Blueprint Created", "type": "main", "index": 0 }]]
+    }
+  },
+
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
