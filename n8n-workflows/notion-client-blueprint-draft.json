@@ -1,19 +1,20 @@
 {
-  "name": "Notion — Client → Blueprint Auto-Draft",
+  "name": "Notion — Client → Blueprint (Living Infra Spec)",
 
   "meta": {
-    "description": "Triggers when a new Client record is added to the Clients DB. Creates a linked Blueprint page, then updates the Client's Status to 'Blueprint drafted' and sets the relation.",
+    "description": "Triggers on new Client page, calls Claude to generate the full 6-section infra spec, creates a structured Blueprint page in Notion via raw API calls, updates Client status/relation, and fires a Discord alert.",
     "env_required": [
-      "NOTION_CLIENTS_DB_ID      — Notion database ID for Clients (already used by intake workflow)",
-      "NOTION_BLUEPRINTS_DB_ID   — Notion database ID for Blueprints (new — add to .env)"
+      "NOTION_CLIENTS_DB_ID      — Clients DB ID",
+      "NOTION_BLUEPRINTS_DB_ID   — Blueprints DB ID",
+      "ANTHROPIC_API_KEY         — Claude API key",
+      "CLAUDE_MODEL              — e.g. claude-sonnet-4-6",
+      "NOTION_TOKEN              — Notion integration token (Bearer)",
+      "DISCORD_INTAKE_WEBHOOK_URL"
     ],
-    "setup_checklist": [
-      "1. Verify the Clients DB has a Relation property named 'Blueprint' pointing at the Blueprints DB.",
-      "2. Verify the Blueprints DB has a Relation property named 'Client' pointing at the Clients DB.",
-      "3. Confirm 'Status' select options in Clients DB include 'Blueprint drafted'.",
-      "4. Confirm 'Status' select options in Blueprints DB include 'Draft'.",
-      "5. Set NOTION_BLUEPRINTS_DB_ID in your .env and in n8n credentials.",
-      "6. Activate this workflow AFTER the intake workflow is live (so Client pages already exist)."
+    "notion_setup": [
+      "Blueprints DB columns: Status (select: Draft/Reviewed/In Progress/Live), Primary Focus (multi_select), Stack Maturity (select: Ad-hoc/Emerging/Structured), Security Level (select: Informal/Basic Controls/Formal (SOC2/ISO/GDPR)), Client (relation → Clients DB), Created From Intake (checkbox)",
+      "Clients DB: add Blueprint (relation → Blueprints DB) and ensure Status has 'Blueprint drafted' option",
+      "Property names in Extract Client Fields Code node must match your actual Clients DB column names exactly"
     ]
   },
 
@@ -41,16 +42,62 @@
       "typeVersion": 2,
       "position": [240, 300],
       "parameters": {
-        "jsCode": "// Pull the fields we need from the Notion trigger payload.\n// Notion returns properties as structured objects — we unpack them here\n// so downstream nodes can use simple $json.* references.\nconst p = $input.first().json.properties ?? {};\n\nfunction text(prop)  { return prop?.rich_text?.[0]?.plain_text ?? prop?.title?.[0]?.plain_text ?? ''; }\nfunction select(prop){ return prop?.select?.name ?? ''; }\nfunction email(prop) { return prop?.email ?? ''; }\nfunction url(prop)   { return prop?.url ?? ''; }\nfunction multi(prop) { return (prop?.multi_select ?? []).map(s => s.name); }\nfunction date(prop)  { return prop?.date?.start ?? ''; }\n\n// ── property names below must match your Clients DB exactly ───────────\n// These match the property keys written by the intake workflow.\nconst client = {\n  page_id:       $input.first().json.id,\n  page_url:      $input.first().json.url,\n  company_name:  text(p['Name'] ?? p['Company']),          // Notion title prop (may be 'Name' or 'Company')\n  contact_name:  text(p['Contact Name']),\n  contact_email: email(p['Contact Email']),\n  team_size:     select(p['Team Size']),\n  pain_primary:  select(p['Pain Point']),\n  cloud:         select(p['Cloud']),\n  compliance:    select(p['Compliance']),\n  automation:    text(p['Automation']),\n  tools_crm:     text(p['Tools — CRM']),\n  tools_pm:      text(p['Tools — PM']),\n  tools_comms:   text(p['Tools — Comms']),\n  off_limits:    text(p['Off-limits']),\n  tags:          multi(p['Tags']),\n  submitted_at:  date(p['Submitted At']),\n};\n\n// Blueprint page title convention\nclient.blueprint_title = `Blueprint — ${client.company_name}`;\n\nreturn [{ json: client }];"
+        "jsCode": "// Unpack Notion property objects into flat $json.* references.\n// ── Adjust property key strings to match your actual Clients DB column names ──\nconst p = $input.first().json.properties ?? {};\n\nconst text   = prop => prop?.rich_text?.[0]?.plain_text ?? prop?.title?.[0]?.plain_text ?? '';\nconst sel    = prop => prop?.select?.name ?? '';\nconst em     = prop => prop?.email ?? '';\nconst multi  = prop => (prop?.multi_select ?? []).map(s => s.name);\nconst dt     = prop => prop?.date?.start ?? '';\n\nconst c = {\n  page_id:          $input.first().json.id,\n  page_url:         $input.first().json.url,\n  company_name:     text(p['Name'] ?? p['Company']),\n  contact_name:     text(p['Contact Name']),\n  contact_email:    em(p['Contact Email']),\n  team_size:        sel(p['Team Size']),\n  pain_primary:     sel(p['Pain Point']),\n  cloud:            sel(p['Cloud']),\n  compliance:       sel(p['Compliance']),\n  compliance_detail:text(p['Compliance Detail'] ?? p['Off-limits']),\n  automation:       text(p['Automation']),\n  tools_crm:        text(p['Tools — CRM']),\n  tools_pm:         text(p['Tools — PM']),\n  tools_comms:      text(p['Tools — Comms']),\n  tools_ads:        text(p['Tools — Ads'] ?? p['Tools — Marketing']),\n  tools_email:      text(p['Tools — Email']),\n  tools_billing:    text(p['Tools — Billing']),\n  tools_data:       text(p['Tools — Data']),\n  tools_other:      text(p['Tools — Other']),\n  off_limits:       text(p['Off-limits']),\n  outcome_30d:      text(p['Outcome 30d'] ?? p['Outcome']),\n  submitted_at:     dt(p['Submitted At']),\n  tags:             multi(p['Tags']),\n};\n\nreturn [{ json: c }];"
       }
     },
 
     {
-      "id": "create-blueprint",
+      "id": "build-prompt",
+      "name": "Build Claude Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300],
+      "parameters": {
+        "jsCode": "const c = $input.first().json;\n\nconst toolsStr = [\n  c.tools_crm     && `CRM: ${c.tools_crm}`,\n  c.tools_pm      && `Project mgmt: ${c.tools_pm}`,\n  c.tools_comms   && `Comms: ${c.tools_comms}`,\n  c.tools_ads     && `Marketing/ads: ${c.tools_ads}`,\n  c.tools_email   && `Email automation: ${c.tools_email}`,\n  c.tools_billing && `Billing: ${c.tools_billing}`,\n  c.tools_data    && `Data/storage: ${c.tools_data}`,\n  c.automation    && `Automation platforms: ${c.automation}`,\n  c.tools_other   && `Other: ${c.tools_other}`,\n].filter(Boolean).join('\\n');\n\n// Company slug for env names (lowercase, alphanumeric+hyphen)\nconst slug = (c.company_name || 'client').toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 20);\n\nconst prompt = `You are an expert automation and ops architect. Based on this client intake data, generate a complete blueprint specification as structured JSON. Be specific and actionable — this directly drives an infra plan and client deliverable.\n\nINTAKE DATA:\nCompany: ${c.company_name}\nTeam size: ${c.team_size}\nPrimary pain: ${c.pain_primary}\nDesired 30-day outcome: ${c.outcome_30d || 'not provided'}\nSecurity/compliance tier: ${c.compliance}\nCloud provider: ${c.cloud}\nOff-limits systems: ${c.off_limits || 'none stated'}\nCompliance detail: ${c.compliance_detail || 'none'}\n\nTools stack:\\n${toolsStr || 'not specified'}\n\nReturn ONLY a raw JSON object (no markdown fences, no explanation). Use this exact schema:\n{\n  \"stack_maturity\": \"Ad-hoc | Emerging | Structured\",\n  \"primary_focus\": [\"one or more of: Reporting, Leads, Content Ops, Back-Office, Other\"],\n  \"company_profile\": [\n    \"Industry and business model — one line\",\n    \"Team size and structure — one line\",\n    \"Revenue model or growth stage — one line\"\n  ],\n  \"pain_bullets\": [\n    { \"text\": \"specific actionable pain description\", \"category\": \"Reporting | Leads | Content | Back-Office\" },\n    { \"text\": \"...\", \"category\": \"...\" },\n    { \"text\": \"...\", \"category\": \"...\" }\n  ],\n  \"security_posture\": \"1-2 sentences summarizing current security stance based on compliance tier and tool footprint\",\n  \"outcomes_30d\": [\"concrete, measurable outcome 1\", \"outcome 2\", \"outcome 3\"],\n  \"outcomes_90d\": [\"concrete, measurable outcome 1\", \"outcome 2\", \"outcome 3\"],\n  \"constraints\": [\"specific constraint from off-limits or compliance\"],\n  \"cloud_choice\": \"GCP | AWS | Azure | None\",\n  \"cloud_reason\": \"one sentence — why this provider for this client\",\n  \"environments\": [\"${slug}-ops-dev\", \"${slug}-ops-prod\"],\n  \"region\": \"specific region — one sentence on latency or compliance reason\",\n  \"shared_vs_owned\": \"which components run on DiscoAgents shared infra vs client-owned cloud\",\n  \"automations\": [\n    {\n      \"number\": \"4.1\",\n      \"category\": \"Reporting | Leads | Content | Back-Office\",\n      \"name\": \"Short name (3-5 words)\",\n      \"goal\": \"one sentence goal\",\n      \"triggers\": [\"system and event that fires this automation\"],\n      \"systems\": [\"System A\", \"System B\"],\n      \"mcp_tools\": [\"specific_tool_name\"],\n      \"security_notes\": \"one sentence on access scope, read/write boundaries, any risks\",\n      \"effort\": \"Low | Medium | High\"\n    },\n    { \"number\": \"4.2\", \"category\": \"Leads\", \"name\": \"...\", \"goal\": \"...\", \"triggers\": [\"...\"], \"systems\": [\"...\"], \"mcp_tools\": [\"...\"], \"security_notes\": \"...\", \"effort\": \"Low\" },\n    { \"number\": \"4.3\", \"category\": \"Back-Office\", \"name\": \"...\", \"goal\": \"...\", \"triggers\": [\"...\"], \"systems\": [\"...\"], \"mcp_tools\": [\"...\"], \"security_notes\": \"...\", \"effort\": \"High\" }\n  ],\n  \"access_rows\": [\n    { \"area\": \"Cloud\", \"resource\": \"cloud project or org\", \"access\": \"service account with limited roles\", \"who\": \"CTO / ops owner\", \"notes\": \"MFA required\" },\n    { \"area\": \"DB\", \"resource\": \"Supabase project\", \"access\": \"mcp_reader credentials\", \"who\": \"Dev lead\", \"notes\": \"No service-role in MCP\" },\n    { \"area\": \"Automation\", \"resource\": \"n8n instance\", \"access\": \"Admin UI + scoped MCP API key\", \"who\": \"Ops/tech contact\", \"notes\": \"IP allowlist preferred\" },\n    { \"area\": \"SaaS\", \"resource\": \"primary CRM / key tool\", \"access\": \"OAuth or scoped read API key\", \"who\": \"System admin\", \"notes\": \"Read-only where possible\" },\n    { \"area\": \"Comms\", \"resource\": \"Slack or Discord\", \"access\": \"Webhook URL only\", \"who\": \"Workspace admin\", \"notes\": \"For alerts only — no bot write access to production\" }\n  ]\n}`;\n\nreturn [{ json: { prompt, client: c } }];"
+      }
+    },
+
+    {
+      "id": "claude-call",
+      "name": "Claude — Generate Blueprint",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key",          "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version",   "value": "2023-06-01" },
+            { "name": "content-type",        "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ model: ($env.CLAUDE_MODEL || 'claude-sonnet-4-6'), max_tokens: 4096, messages: [{ role: 'user', content: $json.prompt }] }) }}"
+      }
+    },
+
+    {
+      "id": "parse-blueprint",
+      "name": "Parse Blueprint + Build Blocks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 300],
+      "parameters": {
+        "jsCode": "// ── Parse Claude response ────────────────────────────────────────────\nlet b;\ntry {\n  const raw = $input.first().json.content[0].text.trim();\n  // Strip markdown fences if Claude added them\n  const clean = raw.startsWith('```') ? raw.replace(/^```[a-z]*\\n?/, '').replace(/\\n?```$/, '') : raw;\n  b = JSON.parse(clean);\n} catch (e) {\n  // Fallback skeleton so the workflow doesn't halt\n  b = {\n    stack_maturity: 'Emerging', primary_focus: ['Other'],\n    company_profile: ['Company profile — pending review.', '', ''],\n    pain_bullets: [{ text: 'Pain details — see linked Client page.', category: 'Other' }],\n    security_posture: 'Security posture to be confirmed during discovery call.',\n    outcomes_30d: ['30-day outcomes to be confirmed with client.', '', ''],\n    outcomes_90d: ['90-day outcomes to be confirmed.', '', ''],\n    constraints: ['Constraints to be confirmed.'],\n    cloud_choice: 'None', cloud_reason: 'Cloud provider to be determined.',\n    environments: ['client-ops-dev', 'client-ops-prod'],\n    region: 'Region to be confirmed based on compliance requirements.',\n    shared_vs_owned: 'Shared vs client-owned components to be determined during scoping.',\n    automations: [\n      { number: '4.1', category: 'Other', name: 'Automation 1 TBD', goal: 'TBD', triggers: ['TBD'], systems: ['TBD'], mcp_tools: ['TBD'], security_notes: 'TBD', effort: 'Medium' },\n      { number: '4.2', category: 'Other', name: 'Automation 2 TBD', goal: 'TBD', triggers: ['TBD'], systems: ['TBD'], mcp_tools: ['TBD'], security_notes: 'TBD', effort: 'Medium' },\n      { number: '4.3', category: 'Other', name: 'Automation 3 TBD', goal: 'TBD', triggers: ['TBD'], systems: ['TBD'], mcp_tools: ['TBD'], security_notes: 'TBD', effort: 'Medium' },\n    ],\n    access_rows: [\n      { area: 'Cloud', resource: 'TBD', access: 'TBD', who: 'TBD', notes: 'MFA required' },\n      { area: 'DB', resource: 'Supabase', access: 'mcp_reader', who: 'Dev lead', notes: 'No service-role' },\n      { area: 'Automation', resource: 'n8n', access: 'Admin + MCP key', who: 'Ops contact', notes: 'IP gating' },\n    ],\n  };\n}\n\nconst c = $('Extract Client Fields').item.json;\n\n// ── Block helpers (Notion API format) ─────────────────────────────────\nconst rt    = t => [{ type: 'text', text: { content: String(t || ' ') } }];\nconst h1    = t => ({ object: 'block', type: 'heading_1',          heading_1:          { rich_text: rt(t) } });\nconst h3    = t => ({ object: 'block', type: 'heading_3',          heading_3:          { rich_text: rt(t) } });\nconst para  = t => ({ object: 'block', type: 'paragraph',          paragraph:          { rich_text: rt(t) } });\nconst bul   = t => ({ object: 'block', type: 'bulleted_list_item', bulleted_list_item: { rich_text: rt(t) } });\nconst todo  = (t, checked = false) => ({ object: 'block', type: 'to_do', to_do: { rich_text: rt(t), checked } });\nconst call  = (t, emoji = 'ℹ️') => ({ object: 'block', type: 'callout', callout: { rich_text: rt(t), icon: { type: 'emoji', emoji } } });\nconst div   = () => ({ object: 'block', type: 'divider', divider: {} });\n\n// Security level map (intake value → Blueprint DB select option)\nconst secMap = {\n  'None / informal only': 'Informal',\n  'Basic: strong auth, least privilege, audit logs': 'Basic Controls',\n  'Formal: SOC2 / ISO / GDPR / other': 'Formal (SOC2/ISO/GDPR)',\n};\nconst secLevel = secMap[c.compliance] || 'Informal';\n\n// Tool list from intake properties\nconst toolLines = [\n  c.tools_crm     && `CRM: ${c.tools_crm}`,\n  c.tools_pm      && `Project mgmt: ${c.tools_pm}`,\n  c.tools_comms   && `Comms: ${c.tools_comms}`,\n  c.tools_ads     && `Marketing / ads: ${c.tools_ads}`,\n  c.tools_email   && `Email automation: ${c.tools_email}`,\n  c.tools_billing && `Billing / finance: ${c.tools_billing}`,\n  c.tools_data    && `Data / storage: ${c.tools_data}`,\n  c.automation    && `Automation platforms: ${c.automation}`,\n  c.tools_other   && `Other: ${c.tools_other}`,\n].filter(Boolean);\n\n// ── SECTION 1 + 2: Current State + Target Outcomes ───────────────────\nconst s12 = [\n  call('Auto-generated from intake. Review and enrich before sharing with client.', '🤖'),\n  div(),\n  h1('1. Current State (Snapshot)'),\n  h3('Company Profile'),\n  ...b.company_profile.filter(Boolean).map(bul),\n  h3('Systems in Play'),\n  ...(toolLines.length ? toolLines.map(bul) : [para('No tools specified in intake.')]),\n  h3('Current Pain Points'),\n  ...b.pain_bullets.map(p => bul(`[${p.category}] ${p.text}`)),\n  h3('Security Posture'),\n  para(b.security_posture),\n  div(),\n  h1('2. Target Outcomes (30–90 Days)'),\n  h3('30-Day Outcomes'),\n  ...b.outcomes_30d.filter(Boolean).map(bul),\n  h3('90-Day Outcomes'),\n  ...b.outcomes_90d.filter(Boolean).map(bul),\n  h3('Constraints / Non-Negotiables'),\n  ...(b.constraints.length ? b.constraints.map(bul) : [para(c.off_limits || 'None specified.')]),\n  div(),\n];\n\n// ── SECTION 3: Infra Stack ────────────────────────────────────────────\nconst s3 = [\n  h1('3. Recommended Infra Stack'),\n  h3('3.1 Cloud & Environments'),\n  bul(`Cloud provider: ${b.cloud_choice}`),\n  bul(`Reason: ${b.cloud_reason}`),\n  bul(`Environments: ${b.environments.join(', ')}`),\n  bul(`Region: ${b.region}`),\n  bul(`Shared vs client-owned: ${b.shared_vs_owned}`),\n  h3('3.2 Core Services'),\n  para('[shared] = DiscoAgents managed infra   [client] = provisioned in client cloud account'),\n  bul('[shared] n8n — Automation orchestration. Scoped MCP API key; editor access behind IP allowlist or VPN.'),\n  bul('[client] Supabase / Postgres — Ops DB + analytics views. mcp_reader role only; service-role never used in MCP or automation.'),\n  bul('[shared] Anthropic Claude — AI enrichment and decision logic in workflows. Key scoped to DiscoAgents org.'),\n  bul('[client] Google Workspace / SSO — Identity and access control for all ops tooling. MFA enforced for all admin accounts.'),\n  bul('[shared] Discord — Internal ops alerts. Webhook URL only; no bot write access to production data.'),\n  div(),\n];\n\n// ── SECTION 4: Priority Automations ──────────────────────────────────\nconst s4 = [h1('4. Priority Automations (v1)')];\nfor (const a of (b.automations || []).slice(0, 3)) {\n  s4.push(\n    h3(`${a.number} [${a.category}] – ${a.name}  ·  Effort: ${a.effort}`),\n    bul(`Goal: ${a.goal}`),\n    bul(`Trigger: ${(a.triggers || []).join('; ')}`),\n    bul(`Systems involved: ${(a.systems || []).join(', ')}`),\n    bul(`MCP tools required: ${(a.mcp_tools || []).join(', ')}`),\n    bul(`Security: ${a.security_notes}`),\n  );\n}\ns4.push(\n  div(),\n  call('v1 limit: 3 automations buildable in 30 days. Add v2 automations only after these are live and stable.', '⚠️'),\n  div(),\n);\n\n// ── SECTION 5 + 6: Security + Implementation Plan ────────────────────\nconst autoName = i => (b.automations && b.automations[i]) ? b.automations[i].name : `Automation ${i + 1} TBD`;\n\nconst s56 = [\n  h1('5. Access & Security Requirements'),\n  h3('Access Checklist'),\n  ...(b.access_rows || []).map(r => bul(`[${r.area}] ${r.resource} — ${r.access} | Provided by: ${r.who} | ${r.notes}`)),\n  h3('Security Level Recap'),\n  bul(`Compliance tier: ${secLevel}`),\n  bul('No master keys or service-role tokens in MCP. Scoped roles only: mcp_reader for DB, page-level tokens for social, limited n8n API key.'),\n  bul('Allow-lists enforced at every boundary: POSTGRES_ALLOWED_TABLES for DB, n8n workflow IDs, SOCIAL_ALLOWED_PLATFORMS.'),\n  bul('All MCP tool calls produce a JSON-lines audit record in .logs/mcp-audit.log (SHA-256 args hash, server, status).'),\n  bul('Human approval gates required before: terraform apply, git push to prod, outbound Twilio calls/SMS, billing changes, DNS changes, auth DB access.'),\n  div(),\n  h1('6. 30-Day Implementation Plan'),\n  h3('Week 1 – Foundation'),\n  todo('Provision cloud project(s), service accounts with least-privilege IAM roles'),\n  todo('Deploy Supabase — run 001_mcp_reader_role.sql, grant SELECT on relevant tables, set MCP_DB_URL + POSTGRES_ALLOWED_TABLES'),\n  todo('Deploy n8n (dev + prod) — set MCP_API_KEY, configure n8n credential for Notion and Anthropic'),\n  todo('Import and activate client-intake-onboarding.json (intake pipeline → Notion → Discord)'),\n  todo('Import and activate notion-client-blueprint-draft.json (this workflow)'),\n  todo('Verify all env vars: ANTHROPIC_API_KEY, NOTION_TOKEN, DISCORD_INTAKE_WEBHOOK_URL, MCP_DB_URL, POSTGRES_ALLOWED_TABLES'),\n  h3('Week 2 – Wire Core Automations'),\n  todo(`Build Automation 4.1: ${autoName(0)} — full end-to-end with error handling and Discord error alert`),\n  todo(`Build Automation 4.2: ${autoName(1)} — full end-to-end`),\n  todo('Configure n8n error workflow → Discord channel for all execution failures'),\n  todo('Validate mcp_reader read-only boundary (attempt write operation, confirm rejection)'),\n  todo('Review audit logs after first live runs — spot-check args_hash and status'),\n  h3('Week 3–4 – Hardening & Handoff'),\n  todo(`Build Automation 4.3: ${autoName(2)} — full end-to-end`),\n  todo('Security review: IAM roles, API key scopes, audit log spot-check, allow-list validation across all MCP servers'),\n  todo('Polish client-visible outputs (report formatting, email templates, Notion dashboard views)'),\n  todo('Write client runbook: how to trigger, monitor, pause, and escalate each automation'),\n  todo('30-min client team walkthrough session'),\n  todo('Final sign-off: client approver confirms live automations meet agreed 30-day outcomes'),\n  div(),\n  call(`Auto-generated from intake (${c.submitted_at ? c.submitted_at.slice(0, 10) : 'date unknown'}). Generated: ${new Date().toISOString().slice(0, 10)}.`, '📋'),\n];\n\nreturn [{\n  json: {\n    s12:              JSON.stringify({ children: s12 }),\n    s3:               JSON.stringify({ children: s3 }),\n    s4:               JSON.stringify({ children: s4 }),\n    s56:              JSON.stringify({ children: s56 }),\n    blueprint_title:  `${c.company_name} – Ops & Infra Blueprint v1`,\n    stack_maturity:   b.stack_maturity,\n    primary_focus:    b.primary_focus,\n    security_level:   secMap[c.compliance] || 'Informal',\n    client_page_id:   c.page_id,\n    client:           c,\n  }\n}];"
+      }
+    },
+
+    {
+      "id": "create-blueprint-page",
       "name": "Create Blueprint Page",
       "type": "n8n-nodes-base.notion",
       "typeVersion": 2,
-      "position": [480, 300],
+      "position": [1200, 300],
       "parameters": {
         "operation": "create",
         "resource": "databasePage",
@@ -61,52 +108,7 @@
             {
               "key": "Client",
               "type": "relation",
-              "relationValue": "=[{ \"id\": \"{{ $json.page_id }}\" }]"
-            },
-            {
-              "key": "Pain Focus",
-              "type": "select",
-              "selectValue": "={{ $json.pain_primary }}"
-            },
-            {
-              "key": "Team Size",
-              "type": "select",
-              "selectValue": "={{ $json.team_size }}"
-            },
-            {
-              "key": "Cloud",
-              "type": "select",
-              "selectValue": "={{ $json.cloud }}"
-            },
-            {
-              "key": "Compliance",
-              "type": "select",
-              "selectValue": "={{ $json.compliance }}"
-            },
-            {
-              "key": "Tools — CRM",
-              "type": "rich_text",
-              "textContent": "={{ $json.tools_crm }}"
-            },
-            {
-              "key": "Tools — PM",
-              "type": "rich_text",
-              "textContent": "={{ $json.tools_pm }}"
-            },
-            {
-              "key": "Automation Stack",
-              "type": "rich_text",
-              "textContent": "={{ $json.automation }}"
-            },
-            {
-              "key": "Off-limits",
-              "type": "rich_text",
-              "textContent": "={{ $json.off_limits }}"
-            },
-            {
-              "key": "Tags",
-              "type": "multi_select",
-              "multiSelectValue": "={{ $('Extract Client Fields').item.json.tags }}"
+              "relationValue": "=[{ \"id\": \"{{ $json.client_page_id }}\" }]"
             },
             {
               "key": "Status",
@@ -114,9 +116,24 @@
               "selectValue": "Draft"
             },
             {
-              "key": "Contact Email",
-              "type": "email",
-              "emailValue": "={{ $json.contact_email }}"
+              "key": "Primary Focus",
+              "type": "multi_select",
+              "multiSelectValue": "={{ $json.primary_focus }}"
+            },
+            {
+              "key": "Stack Maturity",
+              "type": "select",
+              "selectValue": "={{ $json.stack_maturity }}"
+            },
+            {
+              "key": "Security Level",
+              "type": "select",
+              "selectValue": "={{ $json.security_level }}"
+            },
+            {
+              "key": "Created From Intake",
+              "type": "checkbox",
+              "checkboxValue": true
             }
           ]
         }
@@ -127,111 +144,111 @@
     },
 
     {
-      "id": "blueprint-intro-blocks",
-      "name": "Add Blueprint Intro Blocks",
-      "type": "n8n-nodes-base.notion",
-      "typeVersion": 2,
-      "position": [720, 200],
+      "id": "append-s12",
+      "name": "Append Sections 1+2 — Current State + Outcomes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 160],
       "parameters": {
-        "operation": "append",
-        "resource": "block",
-        "blockId": "={{ $('Create Blueprint Page').item.json.id }}",
-        "blockUi": {
-          "blockValues": [
-            {
-              "type": "callout",
-              "textContent": "Auto-generated from intake form. Fill in pain description, 30-day outcome, and proposed solution before sending to client."
-            },
-            {
-              "type": "heading_2",
-              "textContent": "Client Context"
-            },
-            {
-              "type": "paragraph",
-              "textContent": "={{ 'Company: ' + $('Extract Client Fields').item.json.company_name + '\\nContact: ' + $('Extract Client Fields').item.json.contact_name + ' (' + $('Extract Client Fields').item.json.contact_email + ')' + '\\nTeam size: ' + $('Extract Client Fields').item.json.team_size + '  |  Cloud: ' + $('Extract Client Fields').item.json.cloud }}"
-            },
-            {
-              "type": "heading_2",
-              "textContent": "Pain Point"
-            },
-            {
-              "type": "paragraph",
-              "textContent": "={{ $('Extract Client Fields').item.json.pain_primary }}"
-            },
-            {
-              "type": "callout",
-              "textContent": "→ Pull full pain description from the linked Client page (stored as page blocks there)."
-            },
-            {
-              "type": "heading_2",
-              "textContent": "10/10 Outcome — 30 Days"
-            },
-            {
-              "type": "callout",
-              "textContent": "→ Pull outcome from the linked Client page."
-            },
-            {
-              "type": "heading_2",
-              "textContent": "Proposed Solution"
-            },
-            {
-              "type": "paragraph",
-              "textContent": "[ To be filled in by team ]"
-            },
-            {
-              "type": "heading_2",
-              "textContent": "Systems in Scope"
-            },
-            {
-              "type": "paragraph",
-              "textContent": "={{ 'CRM: ' + $('Extract Client Fields').item.json.tools_crm + '\\nPM: ' + $('Extract Client Fields').item.json.tools_pm + '\\nComms: ' + $('Extract Client Fields').item.json.tools_comms + '\\nAutomation: ' + $('Extract Client Fields').item.json.automation }}"
-            },
-            {
-              "type": "heading_2",
-              "textContent": "Off-limits / Constraints"
-            },
-            {
-              "type": "paragraph",
-              "textContent": "={{ $('Extract Client Fields').item.json.off_limits || 'None specified.' }}"
-            },
-            {
-              "type": "heading_2",
-              "textContent": "Deliverables"
-            },
-            {
-              "type": "to_do",
-              "textContent": "Workflow diagram"
-            },
-            {
-              "type": "to_do",
-              "textContent": "n8n / automation spec"
-            },
-            {
-              "type": "to_do",
-              "textContent": "Security review"
-            },
-            {
-              "type": "to_do",
-              "textContent": "Client sign-off"
-            }
+        "method": "PATCH",
+        "url": "={{ 'https://api.notion.com/v1/blocks/' + $('Create Blueprint Page').item.json.id + '/children' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization",   "value": "={{ 'Bearer ' + $env.NOTION_TOKEN }}" },
+            { "name": "Notion-Version",  "value": "2022-06-28" },
+            { "name": "Content-Type",    "value": "application/json" }
           ]
-        }
-      },
-      "credentials": {
-        "notionApi": { "name": "Notion account" }
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $('Parse Blueprint + Build Blocks').item.json.s12 }}"
       }
     },
 
     {
-      "id": "update-client-status",
+      "id": "append-s3",
+      "name": "Append Section 3 — Infra Stack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1680, 160],
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ 'https://api.notion.com/v1/blocks/' + $('Create Blueprint Page').item.json.id + '/children' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization",  "value": "={{ 'Bearer ' + $env.NOTION_TOKEN }}" },
+            { "name": "Notion-Version", "value": "2022-06-28" },
+            { "name": "Content-Type",   "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $('Parse Blueprint + Build Blocks').item.json.s3 }}"
+      }
+    },
+
+    {
+      "id": "append-s4",
+      "name": "Append Section 4 — Automations",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1920, 160],
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ 'https://api.notion.com/v1/blocks/' + $('Create Blueprint Page').item.json.id + '/children' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization",  "value": "={{ 'Bearer ' + $env.NOTION_TOKEN }}" },
+            { "name": "Notion-Version", "value": "2022-06-28" },
+            { "name": "Content-Type",   "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $('Parse Blueprint + Build Blocks').item.json.s4 }}"
+      }
+    },
+
+    {
+      "id": "append-s56",
+      "name": "Append Sections 5+6 — Security + Plan",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2160, 160],
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ 'https://api.notion.com/v1/blocks/' + $('Create Blueprint Page').item.json.id + '/children' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization",  "value": "={{ 'Bearer ' + $env.NOTION_TOKEN }}" },
+            { "name": "Notion-Version", "value": "2022-06-28" },
+            { "name": "Content-Type",   "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $('Parse Blueprint + Build Blocks').item.json.s56 }}"
+      }
+    },
+
+    {
+      "id": "update-client",
       "name": "Update Client — Status + Blueprint Relation",
       "type": "n8n-nodes-base.notion",
       "typeVersion": 2,
-      "position": [720, 400],
+      "position": [1440, 440],
       "parameters": {
         "operation": "update",
         "resource": "databasePage",
-        "pageId": "={{ $('Extract Client Fields').item.json.page_id }}",
+        "pageId": "={{ $('Parse Blueprint + Build Blocks').item.json.client_page_id }}",
         "propertiesUi": {
           "propertyValues": [
             {
@@ -253,11 +270,11 @@
     },
 
     {
-      "id": "discord-blueprint-alert",
+      "id": "discord-alert",
       "name": "Discord — Blueprint Created",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [960, 300],
+      "position": [2400, 160],
       "parameters": {
         "method": "POST",
         "url": "={{ $env.DISCORD_INTAKE_WEBHOOK_URL }}",
@@ -266,7 +283,7 @@
           "parameters": [
             {
               "name": "content",
-              "value": "={{ '📋 **Blueprint drafted: ' + $('Extract Client Fields').item.json.company_name + '**\\n> Pain: ' + $('Extract Client Fields').item.json.pain_primary + '\\n> Team: ' + $('Extract Client Fields').item.json.team_size + '  |  Cloud: ' + $('Extract Client Fields').item.json.cloud + '\\n> Client: ' + $('Extract Client Fields').item.json.page_url + '\\n> Blueprint: ' + $('Create Blueprint Page').item.json.url }}"
+              "value": "={{ '📋 **Blueprint drafted: ' + $(\\'Parse Blueprint + Build Blocks\\').item.json.blueprint_title + '**\\n> Stack maturity: ' + $(\\'Parse Blueprint + Build Blocks\\').item.json.stack_maturity + '  |  Security: ' + $(\\'Parse Blueprint + Build Blocks\\').item.json.security_level + '\\n> Client page: ' + $(\\'Extract Client Fields\\').item.json.page_url + '\\n> Blueprint: ' + $(\\'Create Blueprint Page\\').item.json.url }}"
             }
           ]
         }
@@ -280,18 +297,35 @@
       "main": [[{ "node": "Extract Client Fields", "type": "main", "index": 0 }]]
     },
     "Extract Client Fields": {
+      "main": [[{ "node": "Build Claude Prompt", "type": "main", "index": 0 }]]
+    },
+    "Build Claude Prompt": {
+      "main": [[{ "node": "Claude — Generate Blueprint", "type": "main", "index": 0 }]]
+    },
+    "Claude — Generate Blueprint": {
+      "main": [[{ "node": "Parse Blueprint + Build Blocks", "type": "main", "index": 0 }]]
+    },
+    "Parse Blueprint + Build Blocks": {
       "main": [[{ "node": "Create Blueprint Page", "type": "main", "index": 0 }]]
     },
     "Create Blueprint Page": {
       "main": [
-        [{ "node": "Add Blueprint Intro Blocks",              "type": "main", "index": 0 }],
-        [{ "node": "Update Client — Status + Blueprint Relation", "type": "main", "index": 0 }]
+        [
+          { "node": "Append Sections 1+2 — Current State + Outcomes", "type": "main", "index": 0 },
+          { "node": "Update Client — Status + Blueprint Relation",     "type": "main", "index": 0 }
+        ]
       ]
     },
-    "Add Blueprint Intro Blocks": {
-      "main": [[{ "node": "Discord — Blueprint Created", "type": "main", "index": 0 }]]
+    "Append Sections 1+2 — Current State + Outcomes": {
+      "main": [[{ "node": "Append Section 3 — Infra Stack", "type": "main", "index": 0 }]]
     },
-    "Update Client — Status + Blueprint Relation": {
+    "Append Section 3 — Infra Stack": {
+      "main": [[{ "node": "Append Section 4 — Automations", "type": "main", "index": 0 }]]
+    },
+    "Append Section 4 — Automations": {
+      "main": [[{ "node": "Append Sections 5+6 — Security + Plan", "type": "main", "index": 0 }]]
+    },
+    "Append Sections 5+6 — Security + Plan": {
       "main": [[{ "node": "Discord — Blueprint Created", "type": "main", "index": 0 }]]
     }
   },

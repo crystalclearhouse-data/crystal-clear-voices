@@ -18,25 +18,34 @@ Receives client intake form submissions, normalises and tags the data, creates a
 
 ---
 
-### 2. Notion — Client → Blueprint Auto-Draft (`notion-client-blueprint-draft.json`)
+### 2. Notion — Client → Blueprint (Living Infra Spec) (`notion-client-blueprint-draft.json`)
 
-Watches the Clients DB for new pages (created by the intake workflow). Automatically creates a pre-structured Blueprint page, links Client ↔ Blueprint via relation properties, and updates Client status to "Blueprint drafted".
+Watches the Clients DB for new pages. Calls Claude to generate the full 6-section infra spec from intake data, then creates a structured Blueprint page in Notion via raw API calls. Sections are appended sequentially so block order is guaranteed.
 
 **Trigger:** Notion — page added to Clients DB
 
 **Env required:**
-- `NOTION_CLIENTS_DB_ID` — Clients database ID
-- `NOTION_BLUEPRINTS_DB_ID` — Blueprints database ID
+- `NOTION_CLIENTS_DB_ID` — Clients DB ID
+- `NOTION_BLUEPRINTS_DB_ID` — Blueprints DB ID
+- `ANTHROPIC_API_KEY` — Claude API key
+- `CLAUDE_MODEL` — e.g. `claude-sonnet-4-6`
+- `NOTION_TOKEN` — Notion integration bearer token
 - `DISCORD_INTAKE_WEBHOOK_URL` — reused for blueprint alert
 
 **Notion setup required before activating:**
-1. Clients DB must have a `Blueprint` relation property → Blueprints DB
-2. Blueprints DB must have a `Client` relation property → Clients DB
-3. Clients DB `Status` select must include `"Blueprint drafted"`
-4. Blueprints DB `Status` select must include `"Draft"`
-5. Property names in the `Extract Client Fields` Code node must match your actual Clients DB column names exactly
+1. Blueprints DB columns: `Status` (select: Draft/Reviewed/In Progress/Live), `Primary Focus` (multi_select), `Stack Maturity` (select: Ad-hoc/Emerging/Structured), `Security Level` (select: Informal/Basic Controls/Formal (SOC2/ISO/GDPR)), `Client` (relation → Clients DB), `Created From Intake` (checkbox)
+2. Clients DB: add `Blueprint` (relation → Blueprints DB), ensure `Status` has `"Blueprint drafted"` option
+3. Property names in `Extract Client Fields` Code node must match your actual Clients DB column names exactly (check especially the title property — may be `Name` or `Company`)
 
-**Flow:** Notion trigger → Extract fields (Code) → Create Blueprint page → [Add intro blocks + Update Client status/relation] → Discord alert
+**Blueprint page sections generated:**
+- Section 1: Current State (company profile, systems in play, pain bullets with categories, security posture)
+- Section 2: Target Outcomes (30-day, 90-day, constraints/non-negotiables)
+- Section 3: Recommended Infra Stack (cloud choice + rationale, environments, core services table)
+- Section 4: Priority Automations v1 (3 automations: trigger, systems, MCP tools, security notes, effort)
+- Section 5: Access & Security Requirements (access checklist, security level recap, MCP safety notes)
+- Section 6: 30-Day Implementation Plan (week-by-week todo checklist)
+
+**Flow:** Notion trigger → Extract fields → Build Claude prompt → Claude API → Parse + build block arrays → Create Blueprint page → [Append S1+2 → S3 → S4 → S5+6 → Discord alert] + [Update Client status + relation (parallel)]
 
 ---
 
