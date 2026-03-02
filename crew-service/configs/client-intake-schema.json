@@ -1,0 +1,239 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DiscoAgents Client Intake Form",
+  "description": "Onboarding intake for new automation and AI infra clients.",
+  "type": "object",
+  "required": [
+    "company_name",
+    "website",
+    "contact_name",
+    "contact_email",
+    "team_size",
+    "pain_point_primary",
+    "pain_description",
+    "outcome_30_days"
+  ],
+  "properties": {
+
+    "_meta": {
+      "type": "object",
+      "description": "Injected by n8n on submission — do not include in form.",
+      "properties": {
+        "submitted_at": { "type": "string", "format": "date-time" },
+        "source":       { "type": "string" }
+      }
+    },
+
+    "section_1": { "type": "string", "const": "Company and Contact" },
+
+    "company_name": {
+      "type": "string",
+      "title": "Company name",
+      "minLength": 1
+    },
+    "website": {
+      "type": "string",
+      "title": "Website",
+      "format": "uri"
+    },
+    "contact_name": {
+      "type": "string",
+      "title": "Primary contact name",
+      "minLength": 1
+    },
+    "contact_email": {
+      "type": "string",
+      "title": "Primary contact email",
+      "format": "email"
+    },
+    "team_size": {
+      "type": "string",
+      "title": "Team size",
+      "enum": ["1-5", "6-10", "11-20", "20+"]
+    },
+
+    "section_2": { "type": "string", "const": "Current Tools" },
+
+    "tools_crm": {
+      "type": "array",
+      "title": "CRM",
+      "items": {
+        "type": "string",
+        "enum": ["HubSpot", "Pipedrive", "Salesforce", "Airtable", "Notion", "Other"]
+      },
+      "uniqueItems": true
+    },
+    "tools_crm_other": {
+      "type": "string",
+      "title": "CRM — other (specify)"
+    },
+    "tools_project_mgmt": {
+      "type": "array",
+      "title": "Project / task management",
+      "items": {
+        "type": "string",
+        "enum": ["ClickUp", "Asana", "Jira", "Notion", "Trello", "Other"]
+      },
+      "uniqueItems": true
+    },
+    "tools_project_mgmt_other": {
+      "type": "string",
+      "title": "Project management — other (specify)"
+    },
+    "tools_comms": {
+      "type": "array",
+      "title": "Communication",
+      "items": {
+        "type": "string",
+        "enum": ["Slack", "Microsoft Teams", "Discord", "Email-only", "Other"]
+      },
+      "uniqueItems": true
+    },
+    "tools_comms_other": {
+      "type": "string",
+      "title": "Communication — other (specify)"
+    },
+    "tools_marketing_ads": {
+      "type": "array",
+      "title": "Marketing and ads",
+      "items": {
+        "type": "string",
+        "enum": ["Meta Ads", "Google Ads", "TikTok Ads", "LinkedIn Ads", "Other"]
+      },
+      "uniqueItems": true
+    },
+    "tools_marketing_ads_other": {
+      "type": "string",
+      "title": "Marketing / ads — other (specify)"
+    },
+    "tools_email_automation": {
+      "type": "array",
+      "title": "Email and marketing automation",
+      "items": {
+        "type": "string",
+        "enum": ["Klaviyo", "Mailchimp", "HubSpot", "ConvertKit", "Other"]
+      },
+      "uniqueItems": true
+    },
+    "tools_email_automation_other": {
+      "type": "string",
+      "title": "Email automation — other (specify)"
+    },
+    "tools_billing": {
+      "type": "array",
+      "title": "Billing / finance",
+      "items": {
+        "type": "string",
+        "enum": ["Stripe", "QuickBooks", "Xero", "Paddle", "Other"]
+      },
+      "uniqueItems": true
+    },
+    "tools_billing_other": {
+      "type": "string",
+      "title": "Billing — other (specify)"
+    },
+    "tools_data_storage": {
+      "type": "array",
+      "title": "Data / storage",
+      "items": {
+        "type": "string",
+        "enum": ["Google Sheets", "BigQuery", "Snowflake", "Postgres/MySQL", "Other"]
+      },
+      "uniqueItems": true
+    },
+    "tools_data_storage_other": {
+      "type": "string",
+      "title": "Data / storage — other (specify)"
+    },
+    "tools_other_free_text": {
+      "type": "string",
+      "title": "Any other tools central to your operations?"
+    },
+
+    "section_3": { "type": "string", "const": "Pain Points and Priorities" },
+
+    "pain_point_primary": {
+      "type": "string",
+      "title": "Which area is the biggest pain today?",
+      "enum": [
+        "Client reporting",
+        "Lead intake and routing",
+        "Content and campaign operations",
+        "Back-office / billing",
+        "Other"
+      ]
+    },
+    "pain_point_primary_other": {
+      "type": "string",
+      "title": "Pain point — other (specify)"
+    },
+    "pain_description": {
+      "type": "string",
+      "title": "Describe what currently breaks or takes too long.",
+      "maxLength": 600
+    },
+    "outcome_30_days": {
+      "type": "string",
+      "title": "What would a '10/10' outcome look like 30 days from now?",
+      "maxLength": 600
+    },
+
+    "section_4": { "type": "string", "const": "Data and Infra" },
+
+    "cloud_provider": {
+      "type": "string",
+      "title": "Do you already have a cloud provider?",
+      "enum": ["GCP", "AWS", "Azure", "None / not sure"]
+    },
+    "source_of_truth": {
+      "type": "string",
+      "title": "Where does most of your 'source of truth' data live?",
+      "enum": ["CRM", "Spreadsheets", "A database / warehouse", "Multiple places", "Not sure"]
+    },
+    "automation_platforms": {
+      "type": "array",
+      "title": "Are you already using any automation platforms?",
+      "items": {
+        "type": "string",
+        "enum": ["Zapier", "Make", "n8n", "Custom scripts", "None"]
+      },
+      "uniqueItems": true
+    },
+    "systems_off_limits": {
+      "type": "string",
+      "title": "Are there any systems or data we should NOT touch or connect to?"
+    },
+
+    "section_5": { "type": "string", "const": "Security and Governance" },
+
+    "compliance_level": {
+      "type": "string",
+      "title": "Do you have any compliance or security requirements?",
+      "enum": [
+        "None / informal only",
+        "Basic: strong auth, least privilege, audit logs",
+        "Formal: SOC2 / ISO / GDPR / other"
+      ]
+    },
+    "compliance_detail": {
+      "type": "string",
+      "title": "If formal — which framework(s)? (SOC2, ISO 27001, GDPR, HIPAA, other)"
+    },
+    "approver_name": {
+      "type": "string",
+      "title": "Who approves new automations or data connections? (name)"
+    },
+    "approver_email": {
+      "type": "string",
+      "title": "Approver email",
+      "format": "email"
+    }
+  },
+
+  "if": {
+    "properties": { "pain_point_primary": { "const": "Other" } }
+  },
+  "then": {
+    "required": ["pain_point_primary_other"]
+  }
+}

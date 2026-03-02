@@ -1,0 +1,170 @@
+{
+  "name": "Client Intake — Onboarding Pipeline",
+  "nodes": [
+
+    {
+      "id": "webhook-intake",
+      "name": "Intake Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "parameters": {
+        "path": "client-intake",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+
+    {
+      "id": "normalize",
+      "name": "Normalize + Tag",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "parameters": {
+        "jsCode": "// Normalize the raw intake payload into a clean client record\nconst body = $input.first().json.body ?? $input.first().json;\n\n// ── Derive tags from answers ──────────────────────────────────────────\nconst tags = [];\n\n// Security tier\nif (body.compliance_level?.startsWith('Formal')) tags.push('security:formal');\nelse if (body.compliance_level?.startsWith('Basic')) tags.push('security:basic');\nelse tags.push('security:informal');\n\n// Cloud\nif (body.cloud_provider && body.cloud_provider !== 'None / not sure')\n  tags.push(`cloud:${body.cloud_provider.toLowerCase()}`);\n\n// Focus area\nconst focusMap = {\n  'Client reporting':              'focus:reporting',\n  'Lead intake and routing':       'focus:lead-routing',\n  'Content and campaign operations': 'focus:content-ops',\n  'Back-office / billing':         'focus:back-office',\n};\nif (focusMap[body.pain_point_primary]) tags.push(focusMap[body.pain_point_primary]);\n\n// Team size\ntags.push(`team:${body.team_size ?? 'unknown'}`);\n\n// Tool surface (first 5 for tagging)\nconst allTools = [\n  ...(body.tools_crm ?? []),\n  ...(body.tools_project_mgmt ?? []),\n  ...(body.tools_comms ?? []),\n  ...(body.tools_billing ?? []),\n].filter(t => t !== 'Other').slice(0, 5);\nallTools.forEach(t => tags.push(`tool:${t.toLowerCase().replace(/[^a-z0-9]/g, '-')}`));\n\n// ── Build normalized record ───────────────────────────────────────────\nreturn [{\n  json: {\n    submitted_at: new Date().toISOString(),\n    // Company\n    company_name:   body.company_name,\n    website:        body.website,\n    contact_name:   body.contact_name,\n    contact_email:  body.contact_email,\n    team_size:      body.team_size,\n    // Pain\n    pain_primary:   body.pain_point_primary === 'Other'\n                      ? body.pain_point_primary_other\n                      : body.pain_point_primary,\n    pain_desc:      body.pain_description,\n    outcome_30d:    body.outcome_30_days,\n    // Infra\n    cloud:          body.cloud_provider,\n    source_of_truth: body.source_of_truth,\n    automation_platforms: (body.automation_platforms ?? []).join(', '),\n    systems_off_limits: body.systems_off_limits ?? '',\n    // Security\n    compliance:     body.compliance_level,\n    compliance_detail: body.compliance_detail ?? '',\n    approver_name:  body.approver_name ?? '',\n    approver_email: body.approver_email ?? '',\n    // Tools (raw)\n    tools_crm:     (body.tools_crm ?? []).join(', '),\n    tools_pm:      (body.tools_project_mgmt ?? []).join(', '),\n    tools_comms:   (body.tools_comms ?? []).join(', '),\n    tools_ads:     (body.tools_marketing_ads ?? []).join(', '),\n    tools_email:   (body.tools_email_automation ?? []).join(', '),\n    tools_billing: (body.tools_billing ?? []).join(', '),\n    tools_data:    (body.tools_data_storage ?? []).join(', '),\n    tools_other:   body.tools_other_free_text ?? '',\n    // Tags (for Notion multi-select)\n    tags: tags,\n    tags_str: tags.join(', ')\n  }\n}];"
+      }
+    },
+
+    {
+      "id": "notion-create",
+      "name": "Create Notion Client Record",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2,
+      "position": [480, 200],
+      "parameters": {
+        "operation": "create",
+        "resource": "databasePage",
+        "databaseId": "={{ $env.NOTION_CLIENTS_DB_ID }}",
+        "title": "={{ $json.company_name }}",
+        "propertiesUi": {
+          "propertyValues": [
+            { "key": "Website",         "type": "url",        "urlValue": "={{ $json.website }}" },
+            { "key": "Contact Name",    "type": "rich_text",  "textContent": "={{ $json.contact_name }}" },
+            { "key": "Contact Email",   "type": "email",      "emailValue": "={{ $json.contact_email }}" },
+            { "key": "Team Size",       "type": "select",     "selectValue": "={{ $json.team_size }}" },
+            { "key": "Pain Point",      "type": "select",     "selectValue": "={{ $json.pain_primary }}" },
+            { "key": "Cloud",           "type": "select",     "selectValue": "={{ $json.cloud }}" },
+            { "key": "Compliance",      "type": "select",     "selectValue": "={{ $json.compliance }}" },
+            { "key": "Tags",            "type": "multi_select","multiSelectValue": "={{ $json.tags }}" },
+            { "key": "Tools — CRM",     "type": "rich_text",  "textContent": "={{ $json.tools_crm }}" },
+            { "key": "Tools — PM",      "type": "rich_text",  "textContent": "={{ $json.tools_pm }}" },
+            { "key": "Tools — Comms",   "type": "rich_text",  "textContent": "={{ $json.tools_comms }}" },
+            { "key": "Automation",      "type": "rich_text",  "textContent": "={{ $json.automation_platforms }}" },
+            { "key": "Off-limits",      "type": "rich_text",  "textContent": "={{ $json.systems_off_limits }}" },
+            { "key": "Approver Name",   "type": "rich_text",  "textContent": "={{ $json.approver_name }}" },
+            { "key": "Approver Email",  "type": "email",      "emailValue": "={{ $json.approver_email }}" },
+            { "key": "Submitted At",    "type": "date",       "date": "={{ $json.submitted_at }}" },
+            { "key": "Status",          "type": "select",     "selectValue": "New" }
+          ]
+        }
+      }
+    },
+
+    {
+      "id": "notion-body-block",
+      "name": "Append Pain + Outcome to Notion Page",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2,
+      "position": [720, 200],
+      "parameters": {
+        "operation": "append",
+        "resource": "block",
+        "blockId": "={{ $('Create Notion Client Record').item.json.id }}",
+        "blockUi": {
+          "blockValues": [
+            {
+              "type": "heading_2",
+              "textContent": "Pain Description"
+            },
+            {
+              "type": "paragraph",
+              "textContent": "={{ $('Normalize + Tag').item.json.pain_desc }}"
+            },
+            {
+              "type": "heading_2",
+              "textContent": "10/10 Outcome — 30 Days"
+            },
+            {
+              "type": "paragraph",
+              "textContent": "={{ $('Normalize + Tag').item.json.outcome_30d }}"
+            },
+            {
+              "type": "heading_2",
+              "textContent": "All Tools"
+            },
+            {
+              "type": "paragraph",
+              "textContent": "={{ $('Normalize + Tag').item.json.tools_other }}"
+            }
+          ]
+        }
+      }
+    },
+
+    {
+      "id": "discord-alert",
+      "name": "Discord — Internal Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 420],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DISCORD_INTAKE_WEBHOOK_URL }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "content",
+              "value": "={{ '🆕 **New intake: ' + $('Normalize + Tag').item.json.company_name + '**\\n' + '> Pain: ' + $('Normalize + Tag').item.json.pain_primary + '\\n' + '> Team: ' + $('Normalize + Tag').item.json.team_size + '  |  Cloud: ' + $('Normalize + Tag').item.json.cloud + '\\n' + '> Tags: `' + $('Normalize + Tag').item.json.tags_str + '`\\n' + '> Contact: ' + $('Normalize + Tag').item.json.contact_name + ' <' + $('Normalize + Tag').item.json.contact_email + '>\\n' + '> Notion: ' + $('Create Notion Client Record').item.json.url }}"
+            }
+          ]
+        }
+      }
+    },
+
+    {
+      "id": "respond-ok",
+      "name": "Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [960, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": true, \"message\": \"Intake received. We'll be in touch within 1 business day.\" }"
+      }
+    }
+
+  ],
+
+  "connections": {
+    "Intake Webhook": {
+      "main": [[{ "node": "Normalize + Tag", "type": "main", "index": 0 }]]
+    },
+    "Normalize + Tag": {
+      "main": [
+        [{ "node": "Create Notion Client Record", "type": "main", "index": 0 }],
+        [{ "node": "Discord — Internal Alert",    "type": "main", "index": 0 }]
+      ]
+    },
+    "Create Notion Client Record": {
+      "main": [[{ "node": "Append Pain + Outcome to Notion Page", "type": "main", "index": 0 }]]
+    },
+    "Append Pain + Outcome to Notion Page": {
+      "main": [[{ "node": "Respond 200", "type": "main", "index": 0 }]]
+    }
+  },
+
+  "settings": {
+    "executionOrder": "v1"
+  },
+
+  "meta": {
+    "description": "Processes client intake form submissions. Normalizes + tags, creates Notion record, appends pain/outcome as page body, fires Discord alert.",
+    "env_required": [
+      "NOTION_CLIENTS_DB_ID   — Notion database ID for client records",
+      "DISCORD_INTAKE_WEBHOOK_URL — Discord channel webhook for internal alerts"
+    ]
+  }
+}
