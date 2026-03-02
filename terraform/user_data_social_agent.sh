@@ -145,7 +145,7 @@ app.post('/posts/:id/publish', async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`🚀 Social Media Agent listening on port ${port}`);
+  console.log(`🚀 Social Media Agent listening on port $${port}`);
 });
 
 initDB();

@@ -20,6 +20,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { withAudit } from "../mcp-audit.js";
+
+const SERVER_NAME = "social-media";
 
 // ── Config ─────────────────────────────────────────────────────────────────
 const {
@@ -33,6 +36,41 @@ const {
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 const TIKTOK = "https://open.tiktokapis.com/v2";
+
+// ── Allow-lists & sanitization ─────────────────────────────────────────────
+const ALLOWED_PLATFORMS = (process.env.SOCIAL_ALLOWED_PLATFORMS || "facebook,instagram,tiktok")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+const MAX_POST_LENGTH = Number(process.env.SOCIAL_MAX_POST_LENGTH || 1000);
+
+function ensurePlatformAllowed(platform) {
+  if (!ALLOWED_PLATFORMS.includes(platform)) {
+    throw new Error(`Platform "${platform}" not in SOCIAL_ALLOWED_PLATFORMS (${ALLOWED_PLATFORMS.join(", ")})`);
+  }
+}
+
+function sanitizeMessage(msg) {
+  const text = String(msg || "").trim();
+  if (!text) throw new Error("Message cannot be empty");
+  return text.length > MAX_POST_LENGTH ? text.slice(0, MAX_POST_LENGTH) : text;
+}
+
+function sanitizeHttpsLink(link) {
+  if (!link) return undefined;
+  const s = String(link).trim();
+  try {
+    const url = new URL(s);
+    if (url.protocol !== "https:") throw new Error("Only https:// links are allowed");
+    // Uncomment to restrict to your own domains:
+    // const allowedDomains = ["thediscobass.com", "thesteelezone.com", "linkfly.to"];
+    // if (!allowedDomains.includes(url.hostname)) throw new Error("Link domain not allowed");
+    return url.toString();
+  } catch (e) {
+    throw new Error(`Invalid link URL: ${e.message}`);
+  }
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function requireEnv(...vars) {
@@ -82,10 +120,17 @@ function ok(text) {
 }
 
 // ── Server ─────────────────────────────────────────────────────────────────
-const server = new McpServer({ name: "social-media", version: "1.0.0" });
+const server = new McpServer({ name: SERVER_NAME, version: "1.0.0" });
+
+/** Wrap server.tool with audit logging */
+function auditedTool(name, desc, schema, handler) {
+  server.tool(name, desc, schema, (args) =>
+    withAudit(SERVER_NAME, name, args, () => handler(args))
+  );
+}
 
 // ── Tool: social_post_all ──────────────────────────────────────────────────
-server.tool(
+auditedTool(
   "social_post_all",
   "Cross-post content to all social platforms (Facebook, Instagram, TikTok) via n8n. Requires n8n to be running (scripts/dev-up.sh).",
   {
@@ -93,10 +138,16 @@ server.tool(
     media_url: z.string().optional().describe("Optional public URL to an image or video"),
   },
   async ({ message, media_url }) => {
+    const safeMessage = sanitizeMessage(message);
+    const safePlatforms = ["facebook", "instagram", "tiktok"].filter((p) => {
+      try { ensurePlatformAllowed(p); return true; } catch { return false; }
+    });
+    if (safePlatforms.length === 0) throw new Error("No allowed platforms configured");
+    const safeMediaUrl = media_url ? sanitizeHttpsLink(media_url) : null;
     const payload = {
-      content: message,
-      media_url: media_url ?? null,
-      platforms: ["facebook", "instagram", "tiktok"],
+      content: safeMessage,
+      media_url: safeMediaUrl,
+      platforms: safePlatforms,
     };
     const res = await fetch(`${N8N_WEBHOOK_URL}/webhook/social-media/post`, {
       method: "POST",
@@ -109,23 +160,26 @@ server.tool(
 );
 
 // ── Tools: Facebook ────────────────────────────────────────────────────────
-server.tool(
+auditedTool(
   "facebook_post",
-  "Post a message (and optional link) to The Steele Zone Facebook Page.",
+  "Post a message (and optional https:// link) to The Steele Zone Facebook Page.",
   {
     message: z.string().describe("Text content to post"),
-    link: z.string().optional().describe("Optional URL to include in the post"),
+    link: z.string().optional().describe("Optional https:// URL to include in the post"),
   },
   async ({ message, link }) => {
+    ensurePlatformAllowed("facebook");
     requireEnv("META_PAGE_ID", "META_PAGE_ACCESS_TOKEN");
-    const params = { message, access_token: META_PAGE_ACCESS_TOKEN };
-    if (link) params.link = link;
+    const safeMessage = sanitizeMessage(message);
+    const safeLink = sanitizeHttpsLink(link);
+    const params = { message: safeMessage, access_token: META_PAGE_ACCESS_TOKEN };
+    if (safeLink) params.link = safeLink;
     const data = await graphPost(`${META_PAGE_ID}/feed`, params);
     return ok(`Posted to Facebook! Post ID: ${data.id}`);
   }
 );
 
-server.tool(
+auditedTool(
   "facebook_get_posts",
   "List recent posts from The Steele Zone Facebook Page with like and comment counts.",
   {
@@ -148,7 +202,7 @@ server.tool(
   }
 );
 
-server.tool(
+auditedTool(
   "facebook_get_comments",
   "Get comments on a specific Facebook post.",
   {
@@ -168,7 +222,7 @@ server.tool(
 );
 
 // ── Tools: Instagram ───────────────────────────────────────────────────────
-server.tool(
+auditedTool(
   "instagram_post",
   "Post an image or video to @the-steele-zone Instagram. Media must be at a public HTTPS URL.",
   {
@@ -180,12 +234,15 @@ server.tool(
       .describe("Type of media to post"),
   },
   async ({ media_url, caption, media_type }) => {
+    ensurePlatformAllowed("instagram");
     requireEnv("META_IG_USER_ID", "META_PAGE_ACCESS_TOKEN");
+    const safeMediaUrl = sanitizeHttpsLink(media_url);
+    const safeCaption = caption ? sanitizeMessage(caption) : undefined;
     const containerParams = {
       access_token: META_PAGE_ACCESS_TOKEN,
       media_type,
-      ...(media_type === "IMAGE" ? { image_url: media_url } : { video_url: media_url }),
-      ...(caption ? { caption } : {}),
+      ...(media_type === "IMAGE" ? { image_url: safeMediaUrl } : { video_url: safeMediaUrl }),
+      ...(safeCaption ? { caption: safeCaption } : {}),
     };
     const container = await graphPost(`${META_IG_USER_ID}/media`, containerParams);
     const published = await graphPost(`${META_IG_USER_ID}/media_publish`, {
@@ -196,7 +253,7 @@ server.tool(
   }
 );
 
-server.tool(
+auditedTool(
   "instagram_get_feed",
   "List recent posts from @the-steele-zone Instagram with engagement stats and URLs.",
   {
@@ -219,7 +276,7 @@ server.tool(
   }
 );
 
-server.tool(
+auditedTool(
   "instagram_get_comments",
   "Get comments on a specific Instagram post.",
   {
@@ -239,7 +296,7 @@ server.tool(
 );
 
 // ── Tools: TikTok ──────────────────────────────────────────────────────────
-server.tool(
+auditedTool(
   "tiktok_get_videos",
   "List recent videos from @the-steele-zone TikTok with view, like, comment, and share counts.",
   {
@@ -262,7 +319,7 @@ server.tool(
   }
 );
 
-server.tool(
+auditedTool(
   "tiktok_post_video",
   "Post a video to @the-steele-zone TikTok via the Content Posting API. Video must be at a public HTTPS URL.",
   {
@@ -277,10 +334,13 @@ server.tool(
     disable_stitch: z.boolean().default(false).describe("Disable stitches for this video"),
   },
   async ({ video_url, title, privacy_level, disable_comment, disable_duet, disable_stitch }) => {
+    ensurePlatformAllowed("tiktok");
     requireEnv("TIKTOK_ACCESS_TOKEN");
+    const safeVideoUrl = sanitizeHttpsLink(video_url);
+    const safeTitle = sanitizeMessage(title);
     const data = await tiktokRequest("post/publish/video/init/", {
-      post_info: { title, privacy_level, disable_comment, disable_duet, disable_stitch },
-      source_info: { source: "PULL_FROM_URL", video_url },
+      post_info: { title: safeTitle, privacy_level, disable_comment, disable_duet, disable_stitch },
+      source_info: { source: "PULL_FROM_URL", video_url: safeVideoUrl },
     });
     return ok(
       `TikTok video post initiated!\nPublish ID: ${data.data?.publish_id}\nNote: Video processing may take a few minutes.`

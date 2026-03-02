@@ -178,7 +178,7 @@ app.get('/requests/:id', async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`🚀 Concierge Agent listening on port ${port}`);
+  console.log(`🚀 Concierge Agent listening on port $${port}`);
 });
 
 initDB();

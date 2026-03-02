@@ -126,7 +126,10 @@
       "args": [
         "-y",
         "@modelcontextprotocol/server-filesystem",
-        "/Users/data-house/projects/crystalclearhouse-data"
+        "/Users/data-house/projects/crystalclearhouse-data/workflows",
+        "/Users/data-house/projects/crystalclearhouse-data/scripts",
+        "/Users/data-house/projects/crystalclearhouse-data/crew-service/configs",
+        "/Users/data-house/projects/crystalclearhouse-data/n8n-workflows"
       ]
     },
     "twilio": {
