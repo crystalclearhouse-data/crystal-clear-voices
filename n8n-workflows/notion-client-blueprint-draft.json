@@ -1,0 +1,302 @@
+{
+  "name": "Notion — Client → Blueprint Auto-Draft",
+
+  "meta": {
+    "description": "Triggers when a new Client record is added to the Clients DB. Creates a linked Blueprint page, then updates the Client's Status to 'Blueprint drafted' and sets the relation.",
+    "env_required": [
+      "NOTION_CLIENTS_DB_ID      — Notion database ID for Clients (already used by intake workflow)",
+      "NOTION_BLUEPRINTS_DB_ID   — Notion database ID for Blueprints (new — add to .env)"
+    ],
+    "setup_checklist": [
+      "1. Verify the Clients DB has a Relation property named 'Blueprint' pointing at the Blueprints DB.",
+      "2. Verify the Blueprints DB has a Relation property named 'Client' pointing at the Clients DB.",
+      "3. Confirm 'Status' select options in Clients DB include 'Blueprint drafted'.",
+      "4. Confirm 'Status' select options in Blueprints DB include 'Draft'.",
+      "5. Set NOTION_BLUEPRINTS_DB_ID in your .env and in n8n credentials.",
+      "6. Activate this workflow AFTER the intake workflow is live (so Client pages already exist)."
+    ]
+  },
+
+  "nodes": [
+
+    {
+      "id": "notion-trigger",
+      "name": "Clients DB — New Page",
+      "type": "n8n-nodes-base.notionTrigger",
+      "typeVersion": 1,
+      "position": [0, 300],
+      "parameters": {
+        "event": "pageAddedToDatabase",
+        "databaseId": "={{ $env.NOTION_CLIENTS_DB_ID }}"
+      },
+      "credentials": {
+        "notionApi": { "name": "Notion account" }
+      }
+    },
+
+    {
+      "id": "extract-client",
+      "name": "Extract Client Fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "parameters": {
+        "jsCode": "// Pull the fields we need from the Notion trigger payload.\n// Notion returns properties as structured objects — we unpack them here\n// so downstream nodes can use simple $json.* references.\nconst p = $input.first().json.properties ?? {};\n\nfunction text(prop)  { return prop?.rich_text?.[0]?.plain_text ?? prop?.title?.[0]?.plain_text ?? ''; }\nfunction select(prop){ return prop?.select?.name ?? ''; }\nfunction email(prop) { return prop?.email ?? ''; }\nfunction url(prop)   { return prop?.url ?? ''; }\nfunction multi(prop) { return (prop?.multi_select ?? []).map(s => s.name); }\nfunction date(prop)  { return prop?.date?.start ?? ''; }\n\n// ── property names below must match your Clients DB exactly ───────────\n// These match the property keys written by the intake workflow.\nconst client = {\n  page_id:       $input.first().json.id,\n  page_url:      $input.first().json.url,\n  company_name:  text(p['Name'] ?? p['Company']),          // Notion title prop (may be 'Name' or 'Company')\n  contact_name:  text(p['Contact Name']),\n  contact_email: email(p['Contact Email']),\n  team_size:     select(p['Team Size']),\n  pain_primary:  select(p['Pain Point']),\n  cloud:         select(p['Cloud']),\n  compliance:    select(p['Compliance']),\n  automation:    text(p['Automation']),\n  tools_crm:     text(p['Tools — CRM']),\n  tools_pm:      text(p['Tools — PM']),\n  tools_comms:   text(p['Tools — Comms']),\n  off_limits:    text(p['Off-limits']),\n  tags:          multi(p['Tags']),\n  submitted_at:  date(p['Submitted At']),\n};\n\n// Blueprint page title convention\nclient.blueprint_title = `Blueprint — ${client.company_name}`;\n\nreturn [{ json: client }];"
+      }
+    },
+
+    {
+      "id": "create-blueprint",
+      "name": "Create Blueprint Page",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2,
+      "position": [480, 300],
+      "parameters": {
+        "operation": "create",
+        "resource": "databasePage",
+        "databaseId": "={{ $env.NOTION_BLUEPRINTS_DB_ID }}",
+        "title": "={{ $json.blueprint_title }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Client",
+              "type": "relation",
+              "relationValue": "=[{ \"id\": \"{{ $json.page_id }}\" }]"
+            },
+            {
+              "key": "Pain Focus",
+              "type": "select",
+              "selectValue": "={{ $json.pain_primary }}"
+            },
+            {
+              "key": "Team Size",
+              "type": "select",
+              "selectValue": "={{ $json.team_size }}"
+            },
+            {
+              "key": "Cloud",
+              "type": "select",
+              "selectValue": "={{ $json.cloud }}"
+            },
+            {
+              "key": "Compliance",
+              "type": "select",
+              "selectValue": "={{ $json.compliance }}"
+            },
+            {
+              "key": "Tools — CRM",
+              "type": "rich_text",
+              "textContent": "={{ $json.tools_crm }}"
+            },
+            {
+              "key": "Tools — PM",
+              "type": "rich_text",
+              "textContent": "={{ $json.tools_pm }}"
+            },
+            {
+              "key": "Automation Stack",
+              "type": "rich_text",
+              "textContent": "={{ $json.automation }}"
+            },
+            {
+              "key": "Off-limits",
+              "type": "rich_text",
+              "textContent": "={{ $json.off_limits }}"
+            },
+            {
+              "key": "Tags",
+              "type": "multi_select",
+              "multiSelectValue": "={{ $('Extract Client Fields').item.json.tags }}"
+            },
+            {
+              "key": "Status",
+              "type": "select",
+              "selectValue": "Draft"
+            },
+            {
+              "key": "Contact Email",
+              "type": "email",
+              "emailValue": "={{ $json.contact_email }}"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "notionApi": { "name": "Notion account" }
+      }
+    },
+
+    {
+      "id": "blueprint-intro-blocks",
+      "name": "Add Blueprint Intro Blocks",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2,
+      "position": [720, 200],
+      "parameters": {
+        "operation": "append",
+        "resource": "block",
+        "blockId": "={{ $('Create Blueprint Page').item.json.id }}",
+        "blockUi": {
+          "blockValues": [
+            {
+              "type": "callout",
+              "textContent": "Auto-generated from intake form. Fill in pain description, 30-day outcome, and proposed solution before sending to client."
+            },
+            {
+              "type": "heading_2",
+              "textContent": "Client Context"
+            },
+            {
+              "type": "paragraph",
+              "textContent": "={{ 'Company: ' + $('Extract Client Fields').item.json.company_name + '\\nContact: ' + $('Extract Client Fields').item.json.contact_name + ' (' + $('Extract Client Fields').item.json.contact_email + ')' + '\\nTeam size: ' + $('Extract Client Fields').item.json.team_size + '  |  Cloud: ' + $('Extract Client Fields').item.json.cloud }}"
+            },
+            {
+              "type": "heading_2",
+              "textContent": "Pain Point"
+            },
+            {
+              "type": "paragraph",
+              "textContent": "={{ $('Extract Client Fields').item.json.pain_primary }}"
+            },
+            {
+              "type": "callout",
+              "textContent": "→ Pull full pain description from the linked Client page (stored as page blocks there)."
+            },
+            {
+              "type": "heading_2",
+              "textContent": "10/10 Outcome — 30 Days"
+            },
+            {
+              "type": "callout",
+              "textContent": "→ Pull outcome from the linked Client page."
+            },
+            {
+              "type": "heading_2",
+              "textContent": "Proposed Solution"
+            },
+            {
+              "type": "paragraph",
+              "textContent": "[ To be filled in by team ]"
+            },
+            {
+              "type": "heading_2",
+              "textContent": "Systems in Scope"
+            },
+            {
+              "type": "paragraph",
+              "textContent": "={{ 'CRM: ' + $('Extract Client Fields').item.json.tools_crm + '\\nPM: ' + $('Extract Client Fields').item.json.tools_pm + '\\nComms: ' + $('Extract Client Fields').item.json.tools_comms + '\\nAutomation: ' + $('Extract Client Fields').item.json.automation }}"
+            },
+            {
+              "type": "heading_2",
+              "textContent": "Off-limits / Constraints"
+            },
+            {
+              "type": "paragraph",
+              "textContent": "={{ $('Extract Client Fields').item.json.off_limits || 'None specified.' }}"
+            },
+            {
+              "type": "heading_2",
+              "textContent": "Deliverables"
+            },
+            {
+              "type": "to_do",
+              "textContent": "Workflow diagram"
+            },
+            {
+              "type": "to_do",
+              "textContent": "n8n / automation spec"
+            },
+            {
+              "type": "to_do",
+              "textContent": "Security review"
+            },
+            {
+              "type": "to_do",
+              "textContent": "Client sign-off"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "notionApi": { "name": "Notion account" }
+      }
+    },
+
+    {
+      "id": "update-client-status",
+      "name": "Update Client — Status + Blueprint Relation",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2,
+      "position": [720, 400],
+      "parameters": {
+        "operation": "update",
+        "resource": "databasePage",
+        "pageId": "={{ $('Extract Client Fields').item.json.page_id }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Status",
+              "type": "select",
+              "selectValue": "Blueprint drafted"
+            },
+            {
+              "key": "Blueprint",
+              "type": "relation",
+              "relationValue": "=[{ \"id\": \"{{ $('Create Blueprint Page').item.json.id }}\" }]"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "notionApi": { "name": "Notion account" }
+      }
+    },
+
+    {
+      "id": "discord-blueprint-alert",
+      "name": "Discord — Blueprint Created",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DISCORD_INTAKE_WEBHOOK_URL }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "content",
+              "value": "={{ '📋 **Blueprint drafted: ' + $('Extract Client Fields').item.json.company_name + '**\\n> Pain: ' + $('Extract Client Fields').item.json.pain_primary + '\\n> Team: ' + $('Extract Client Fields').item.json.team_size + '  |  Cloud: ' + $('Extract Client Fields').item.json.cloud + '\\n> Client: ' + $('Extract Client Fields').item.json.page_url + '\\n> Blueprint: ' + $('Create Blueprint Page').item.json.url }}"
+            }
+          ]
+        }
+      }
+    }
+
+  ],
+
+  "connections": {
+    "Clients DB — New Page": {
+      "main": [[{ "node": "Extract Client Fields", "type": "main", "index": 0 }]]
+    },
+    "Extract Client Fields": {
+      "main": [[{ "node": "Create Blueprint Page", "type": "main", "index": 0 }]]
+    },
+    "Create Blueprint Page": {
+      "main": [
+        [{ "node": "Add Blueprint Intro Blocks",              "type": "main", "index": 0 }],
+        [{ "node": "Update Client — Status + Blueprint Relation", "type": "main", "index": 0 }]
+      ]
+    },
+    "Add Blueprint Intro Blocks": {
+      "main": [[{ "node": "Discord — Blueprint Created", "type": "main", "index": 0 }]]
+    },
+    "Update Client — Status + Blueprint Relation": {
+      "main": [[{ "node": "Discord — Blueprint Created", "type": "main", "index": 0 }]]
+    }
+  },
+
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

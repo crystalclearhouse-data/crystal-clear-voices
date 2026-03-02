@@ -1,10 +1,46 @@
 # n8n Workflows
 
-Crystal Clear Voices uses two main n8n workflows to power the agent system.
+Crystal Clear Voices / DiscoAgents n8n workflows.
 
 ## Workflows
 
-### 1. Social Media Agent (`social-media-agent.json`)
+### 1. Client Intake — Onboarding Pipeline (`client-intake-onboarding.json`)
+
+Receives client intake form submissions, normalises and tags the data, creates a Notion Client record, appends pain/outcome as page body blocks, and fires a Discord alert.
+
+**Trigger:** `POST /webhook/client-intake`
+
+**Env required:**
+- `NOTION_CLIENTS_DB_ID` — Clients database ID
+- `DISCORD_INTAKE_WEBHOOK_URL` — Discord channel webhook
+
+**Flow:** Intake Webhook → Normalize+Tag (Code) → [Notion create record + Discord alert] → Append body blocks → Respond 200
+
+---
+
+### 2. Notion — Client → Blueprint Auto-Draft (`notion-client-blueprint-draft.json`)
+
+Watches the Clients DB for new pages (created by the intake workflow). Automatically creates a pre-structured Blueprint page, links Client ↔ Blueprint via relation properties, and updates Client status to "Blueprint drafted".
+
+**Trigger:** Notion — page added to Clients DB
+
+**Env required:**
+- `NOTION_CLIENTS_DB_ID` — Clients database ID
+- `NOTION_BLUEPRINTS_DB_ID` — Blueprints database ID
+- `DISCORD_INTAKE_WEBHOOK_URL` — reused for blueprint alert
+
+**Notion setup required before activating:**
+1. Clients DB must have a `Blueprint` relation property → Blueprints DB
+2. Blueprints DB must have a `Client` relation property → Clients DB
+3. Clients DB `Status` select must include `"Blueprint drafted"`
+4. Blueprints DB `Status` select must include `"Draft"`
+5. Property names in the `Extract Client Fields` Code node must match your actual Clients DB column names exactly
+
+**Flow:** Notion trigger → Extract fields (Code) → Create Blueprint page → [Add intro blocks + Update Client status/relation] → Discord alert
+
+---
+
+### 3. Social Media Agent (`social-media-agent.json`)
 
 Handles content creation, scheduling, and posting across social media platforms.
 
@@ -25,19 +61,9 @@ Handles content creation, scheduling, and posting across social media platforms.
 }
 ```
 
-**Outputs:**
-```json
-{
-  "success": true,
-  "id": 123,
-  "platform": "twitter",
-  "status": "published"
-}
-```
-
 ---
 
-### 2. Concierge Agent (`concierge-agent.json`)
+### 5. Concierge Agent (`concierge-agent.json`)
 
 Handles user service requests including bookings, information requests, and support tickets.
 
