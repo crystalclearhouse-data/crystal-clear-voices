@@ -1,16 +1,18 @@
 # n8n Workflows
 
-Crystal Clear Voices / DiscoAgents n8n workflows.
+Crystal Clear Voices / DiscoAgents n8n automation workflows.
 
 ## Workflows
 
 ### 1. Client Intake — Onboarding Pipeline (`client-intake-onboarding.json`)
 
-Receives client intake form submissions, normalises and tags the data, creates a Notion Client record, appends pain/outcome as page body blocks, and fires a Discord alert.
+Receives client intake form submissions, normalises and tags the data, creates a Notion Client record,
+appends pain/outcome as page body blocks, and fires a Discord alert.
 
 **Trigger:** `POST /webhook/client-intake`
 
 **Env required:**
+
 - `NOTION_CLIENTS_DB_ID` — Clients database ID
 - `DISCORD_INTAKE_WEBHOOK_URL` — Discord channel webhook
 
@@ -20,11 +22,14 @@ Receives client intake form submissions, normalises and tags the data, creates a
 
 ### 2. Notion — Client → Blueprint (Living Infra Spec) (`notion-client-blueprint-draft.json`)
 
-Watches the Clients DB for new pages. Calls Claude to generate the full 6-section infra spec from intake data, then creates a structured Blueprint page in Notion via raw API calls. Sections are appended sequentially so block order is guaranteed.
+Watches the Clients DB for new pages. Calls Claude to generate the full 6-section infra spec from intake
+data, then creates a structured Blueprint page in Notion via raw API calls. Sections are appended
+sequentially so block order is guaranteed.
 
 **Trigger:** Notion — page added to Clients DB
 
 **Env required:**
+
 - `NOTION_CLIENTS_DB_ID` — Clients DB ID
 - `NOTION_BLUEPRINTS_DB_ID` — Blueprints DB ID
 - `ANTHROPIC_API_KEY` — Claude API key
@@ -33,11 +38,17 @@ Watches the Clients DB for new pages. Calls Claude to generate the full 6-sectio
 - `DISCORD_INTAKE_WEBHOOK_URL` — reused for blueprint alert
 
 **Notion setup required before activating:**
-1. Blueprints DB columns: `Status` (select: Draft/Reviewed/In Progress/Live), `Primary Focus` (multi_select), `Stack Maturity` (select: Ad-hoc/Emerging/Structured), `Security Level` (select: Informal/Basic Controls/Formal (SOC2/ISO/GDPR)), `Client` (relation → Clients DB), `Created From Intake` (checkbox)
+
+1. Blueprints DB columns: `Status` (select: Draft/Reviewed/In Progress/Live), `Primary Focus`
+   (multi_select), `Stack Maturity` (select: Ad-hoc/Emerging/Structured), `Security Level`
+   (select: Informal/Basic Controls/Formal (SOC2/ISO/GDPR)), `Client` (relation → Clients DB),
+   `Created From Intake` (checkbox)
 2. Clients DB: add `Blueprint` (relation → Blueprints DB), ensure `Status` has `"Blueprint drafted"` option
-3. Property names in `Extract Client Fields` Code node must match your actual Clients DB column names exactly (check especially the title property — may be `Name` or `Company`)
+3. Property names in `Extract Client Fields` Code node must match your actual Clients DB column names
+   exactly (check especially the title property — may be `Name` or `Company`)
 
 **Blueprint page sections generated:**
+
 - Section 1: Current State (company profile, systems in play, pain bullets with categories, security posture)
 - Section 2: Target Outcomes (30-day, 90-day, constraints/non-negotiables)
 - Section 3: Recommended Infra Stack (cloud choice + rationale, environments, core services table)
@@ -45,30 +56,37 @@ Watches the Clients DB for new pages. Calls Claude to generate the full 6-sectio
 - Section 5: Access & Security Requirements (access checklist, security level recap, MCP safety notes)
 - Section 6: 30-Day Implementation Plan (week-by-week todo checklist)
 
-**Flow:** Notion trigger → Extract fields → Build Claude prompt → Claude API → Parse + build block arrays → Create Blueprint page → [Append S1+2 → S3 → S4 → S5+6 → Discord alert] + [Update Client status + relation (parallel)]
+**Flow:** Notion trigger → Extract fields → Build Claude prompt → Claude API → Parse + build block arrays
+→ Create Blueprint page → [Append S1+2 → S3 → S4 → S5+6 → Discord alert] + [Update Client status + relation (parallel)]
 
 ---
 
 ### 3. Notion — Creator → Content Pipeline Blueprint (`creator-content-pipeline-blueprint.json`)
 
-Same AI-driven pattern as the infra spec, retuned for creator brands (TheDiscoBass, TheSteeleZone, creator clients). Generates a 6-section content systems spec focused on platform strategy, content pipelines, repurposing, brand voice, and launch plan.
+Same AI-driven pattern as the infra spec, retuned for creator brands (TheDiscoBass, TheSteeleZone,
+creator clients). Generates a 6-section content systems spec focused on platform strategy, content
+pipelines, repurposing, brand voice, and launch plan.
 
 **Trigger:** Notion — page added to Creators DB
 
 **Env required:**
+
 - `NOTION_CREATORS_DB_ID` — Creator records DB
 - `NOTION_BLUEPRINTS_DB_ID` — shared Blueprints DB (add `Blueprint Type` select: Infra Spec / Content Pipeline)
 - `ANTHROPIC_API_KEY`, `CLAUDE_MODEL`, `NOTION_TOKEN`, `DISCORD_INTAKE_WEBHOOK_URL`
 
-**Creator intake schema:** `crew-service/configs/creator-intake-schema.json` — 6 sections covering brand/contact, platforms & formats, tools, monetization, bottlenecks, and brand voice/safety.
+**Creator intake schema:** `crew-service/configs/creator-intake-schema.json` — 6 sections covering
+brand/contact, platforms & formats, tools, monetization, bottlenecks, and brand voice/safety.
 
 **Blueprints DB columns to add (creator-specific):**
+
 - `Blueprint Type` (select): Infra Spec, Content Pipeline
 - `Platform Maturity` (select): Starting Out, Active, Scaling
 - `Brand Safety Level` (select): Open, Brand Deal Safe, Restricted
 - `Creator` (relation → Creators DB)
 
 **Blueprint page sections generated:**
+
 - Section 1: Content Snapshot (brand profile, platforms, tools, monetization, bottlenecks with categories, platform health)
 - Section 2: Content Goals (30-day, 90-day, constraints + brand deal restrictions)
 - Section 3: Content Stack (platform strategy with primary/secondary/experimental, stack by layer: calendar/editing/scheduling/storage/analytics, calendar structure)
@@ -77,66 +95,81 @@ Same AI-driven pattern as the infra spec, retuned for creator brands (TheDiscoBa
 - Section 6: 30-Day Content Pipeline Launch Plan (week-by-week todo checklist)
 
 **Key differences from Infra Spec:**
+
 - Section 5 is Brand Voice & Platform Rules (not Access & Security)
-- Agent guardrails enforced: SOCIAL_ALLOWED_PLATFORMS allow-list, SOCIAL_MAX_POST_LENGTH, no autonomous publish to restricted platforms, no brand deal content approval without human
+- Agent guardrails enforced: `SOCIAL_ALLOWED_PLATFORMS` allow-list, `SOCIAL_MAX_POST_LENGTH`, no autonomous
+  publish to restricted platforms, no brand deal content approval without human review
 - Platform strategy drives priorities rather than cloud/compliance
 
-**Flow:** Notion trigger → Extract fields → Build Claude prompt → Claude API → Parse + build block arrays → Create Blueprint page → [Append S1+2 → S3 → S4 → S5+6 → Discord alert] + [Update Creator status + relation (parallel)]
+**Flow:** Notion trigger → Extract fields → Build Claude prompt → Claude API → Parse + build block arrays
+→ Create Blueprint page → [Append S1+2 → S3 → S4 → S5+6 → Discord alert] + [Update Creator status + relation (parallel)]
 
 ---
 
 ### 4. Social Media Agent (`social-media-agent.json`)
 
-Handles content creation, scheduling, and posting across social media platforms.
+Cross-platform content scheduler and publisher via Meta Graph API (Facebook/Instagram) and TikTok API.
 
 **Nodes:**
-- **Webhook**: Receives post requests
-- **Validation**: Checks content length and format
-- **Database**: Saves posts to PostgreSQL
-- **Scheduling**: Checks if post should be scheduled or published immediately
-- **API Integration**: Posts to social media platforms
-- **Status Update**: Updates post status in database
+
+- **Webhook**: Receives publish requests from the API server or n8n schedule triggers
+- **Validation**: Enforces platform-specific content length and format constraints
+- **Database**: Persists post record to PostgreSQL with `draft` status
+- **Scheduler**: Routes to immediate publish or deferred queue based on `scheduled_time`
+- **Platform Publisher**: Calls Meta Graph API or TikTok API with platform-specific payload
+- **Status Update**: Writes final `published` / `failed` status and timestamp to DB
 
 **Inputs:**
+
 ```json
 {
-  "platform": "twitter|instagram|facebook",
+  "platform": "facebook|instagram|tiktok",
   "content": "Post content text",
-  "scheduled_time": "2024-02-26T14:30:00Z (optional)"
+  "scheduled_time": "2026-01-01T14:30:00Z"
 }
 ```
+
+**Env required:**
+
+- `META_PAGE_ID`, `META_PAGE_ACCESS_TOKEN`, `META_IG_USER_ID`
+- `TIKTOK_ACCESS_TOKEN`, `TIKTOK_OPEN_ID`
 
 ---
 
 ### 5. Concierge Agent (`concierge-agent.json`)
 
-Handles user service requests including bookings, information requests, and support tickets.
+Sophie AI voice concierge request processor — ingests structured intent from Twilio voice calls and
+routes to fulfilment paths.
 
 **Nodes:**
-- **Webhook**: Receives user requests
-- **Parser**: Extracts request details
-- **Database**: Creates request record
-- **Router**: Routes based on request type
-- **Processors**: Handles booking, information, or support requests
-- **Notification**: Sends confirmation to user
-- **Status Update**: Updates request status
+
+- **Webhook**: Receives intent payload forwarded from voice-server `/twilio/gather`
+- **Parser**: Normalises caller intent and extracts entities
+- **Database**: Creates `concierge_requests` record in Supabase / RDS Aurora
+- **Router**: Branches on `request_type` (booking / information / escalation)
+- **Claude Processor**: Resolves information and booking requests via Anthropic API (`claude-sonnet-4-6`)
+- **Notification**: Returns TwiML `<Say>` response or sends follow-up SMS via Twilio
+- **Status Update**: Writes resolution status back to DB
 
 **Request Types:**
-- `booking`: Hotel, restaurant, event reservations
-- `information`: General enquiries answered by AI
-- `support`: Support tickets requiring human assistance
+
+- `booking`: Reservation and scheduling requests
+- `information`: General enquiries resolved by Claude
+- `escalation`: Routes to human handoff when confidence threshold is not met
 
 **Inputs:**
+
 ```json
 {
   "user_id": "user_12345",
-  "request_type": "booking|information|support",
-  "description": "What does the user need?",
-  "priority": "normal|high (optional)"
+  "request_type": "booking|information|escalation",
+  "description": "Caller intent transcribed by Twilio",
+  "priority": "normal|high"
 }
 ```
 
 **Outputs:**
+
 ```json
 {
   "success": true,
@@ -146,6 +179,12 @@ Handles user service requests including bookings, information requests, and supp
 }
 ```
 
+**Env required:**
+
+- `ANTHROPIC_API_KEY`, `CLAUDE_MODEL`
+- `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`
+- `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` (or `DATABASE_URL` for RDS Aurora)
+
 ---
 
 ## Importing Workflows
@@ -154,31 +193,44 @@ Handles user service requests including bookings, information requests, and supp
 2. Go to **Workflows** → **Import**
 3. Upload the JSON file
 4. Configure credentials:
-   - **Database**: PostgreSQL connection
-   - **API Keys**: Social media platform tokens
-   - **Email**: SMTP configuration for notifications
-   - **AI**: OpenAI API key (for concierge information requests)
+   - **Database**: Supabase / RDS Aurora PostgreSQL connection
+   - **Meta**: `META_PAGE_ACCESS_TOKEN`, `META_PAGE_ID`, `META_IG_USER_ID`
+   - **TikTok**: `TIKTOK_ACCESS_TOKEN`, `TIKTOK_OPEN_ID`
+   - **AI**: `ANTHROPIC_API_KEY` — Claude is the LLM backend for all AI processing
 
 ---
 
 ## Environment Variables Required
 
 ```bash
-# For social media agent
-SOCIAL_MEDIA_API_KEY=your_api_key
-SOCIAL_MEDIA_SECRET=your_secret
+# Social media agent
+META_PAGE_ID=
+META_PAGE_ACCESS_TOKEN=
+META_IG_USER_ID=
+TIKTOK_ACCESS_TOKEN=
+TIKTOK_OPEN_ID=
 
-# For concierge agent  
-BOOKING_API_KEY=your_booking_api_key
-OPENAI_API_KEY=your_openai_key
-SMTP_PASSWORD=your_email_password
+# Concierge agent
+ANTHROPIC_API_KEY=
+CLAUDE_MODEL=claude-sonnet-4-6
+TWILIO_ACCOUNT_SID=
+TWILIO_AUTH_TOKEN=
+
+# Database (both agents)
+SUPABASE_URL=
+SUPABASE_SERVICE_KEY=
+
+# Notion workflows
+NOTION_TOKEN=
+NOTION_CLIENTS_DB_ID=
+NOTION_BLUEPRINTS_DB_ID=
+NOTION_CREATORS_DB_ID=
+DISCORD_INTAKE_WEBHOOK_URL=
 ```
 
 ---
 
 ## Database Schema
-
-The workflows expect these tables:
 
 ```sql
 -- Social Media Posts
@@ -216,17 +268,18 @@ CREATE TABLE concierge_responses (
 ## Testing Workflows
 
 ### Test Social Media Agent
+
 ```bash
 curl -X POST http://localhost:5678/webhook/social-media-webhook \
   -H "Content-Type: application/json" \
   -d '{
-    "platform": "twitter",
-    "content": "Testing Crystal Clear Voices social media agent!",
-    "scheduled_time": null
+    "platform": "instagram",
+    "content": "Testing Crystal Clear Voices social media agent!"
   }'
 ```
 
 ### Test Concierge Agent
+
 ```bash
 curl -X POST http://localhost:5678/webhook/concierge-webhook \
   -H "Content-Type: application/json" \
@@ -240,15 +293,9 @@ curl -X POST http://localhost:5678/webhook/concierge-webhook \
 
 ---
 
-## Workflow Execution Order
-
-Both workflows use `v1` execution order (sequential node processing). Adjust in workflow settings if parallel execution is needed.
-
----
-
 ## Monitoring & Logs
 
-- View execution logs in n8n dashboard
-- Check database for request/post history
-- Monitor webhook endpoints for failures
-- Set up Slack/email alerts for error handling
+- View execution history in n8n dashboard → Workflows → Executions
+- Query `concierge_requests` and `social_media_posts` for audit trails
+- Monitor webhook endpoint availability at `GET /health` on the voice-server
+- Configure n8n error workflows or Slack/Discord alerts for failed executions

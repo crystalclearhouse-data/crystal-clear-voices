@@ -1,6 +1,6 @@
 # Workflows
 
-This folder contains n8n workflows organized by category for the Crystal Clear Voices learning experiment.
+This directory contains all n8n automation workflows for Crystal Clear Voices, organized by operational category and lifecycle stage.
 
 Categories:
 - Production

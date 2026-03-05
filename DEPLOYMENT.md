@@ -1,21 +1,18 @@
-# Crystal Clear Voices - Complete Deployment Guide
+# Crystal Clear Voices — Deployment Guide
 
-End-to-end deployment guide for the social media + concierge agent system.
+End-to-end deployment guide for the Sophie AI voice concierge and social media automation system.
 
 ---
 
 ## Architecture Overview
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
-│                                                                 │
 │                   CLIENT / API CONSUMERS                        │
-│                                                                 │
 └───────────────────────────┬─────────────────────────────────────┘
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                                                                 │
 │          EXPRESS.JS API SERVER (api-server/index.js)           │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  POST /api/social-media/post                             │  │
@@ -26,16 +23,16 @@ End-to-end deployment guide for the social media + concierge agent system.
 └───────────────────────────┬─────────────────────────────────────┘
            │                │                │
     ┌──────▼────────────────▼────────────────▼─────┐
-    │  RDS AURORA POSTGRESQL CLUSTER (AWS)        │
-    │  ├── social_media_posts                      │
-    │  ├── concierge_requests                      │
-    │  └── concierge_responses                     │
+    │  RDS AURORA POSTGRESQL CLUSTER (AWS)          │
+    │  ├── social_media_posts                        │
+    │  ├── concierge_requests                        │
+    │  └── concierge_responses                       │
     └──────────────────────────────────────────────┘
            │                │
     ┌──────▼──────┐  ┌─────▼───────────────────┐
     │   n8n Flow  │  │   n8n Webhook Triggers  │
     │             │  │                         │
-    │ Social Media │  │ Concierge Processing   │
+    │ Social Media│  │ Concierge Processing   │
     │ Publishing  │  │ AI Responses / Routing  │
     └─────────────┘  └─────────────────────────┘
 ```
@@ -44,74 +41,55 @@ End-to-end deployment guide for the social media + concierge agent system.
 
 ## Prerequisites
 
-- AWS Account with credentials
-- Terraform installed (`brew install terraform`)
-- AWS CLI installed (`brew install awscli`)
-- Node.js 18+ installed
-- n8n instance (cloud.n8n.io or self-hosted)
-- Domain configured for DNS (optional but recommended)
+- AWS account with credentials configured
+- Terraform ≥ 1.5 (`brew install terraform`)
+- AWS CLI (`brew install awscli`)
+- Node.js 18+
+- n8n instance (cloud.n8n.io or self-hosted Docker)
+- Domain with DNS access (recommended for production)
 
 ---
 
 ## Phase 1: AWS Infrastructure Setup (Terraform)
 
-### 1.1 Prepare AWS Credentials
+### 1.1 Configure AWS CLI
 
 ```bash
-# Configure AWS CLI
 aws configure
-
-# You'll be prompted for:
-# - AWS Access Key ID
-# - AWS Secret Access Key
-# - Default region: us-east-1
-# - Output format: json
+# Prompts: Access Key ID, Secret Access Key, region (us-east-1), output format (json)
 ```
 
-### 1.2 Get VPC & Subnet Information
+### 1.2 Enumerate VPC and Subnets
 
 ```bash
-# List VPCs
 aws ec2 describe-vpcs --query 'Vpcs[*].[VpcId, IsDefault]' --output table
 
-# List subnets for your VPC
-aws ec2 describe-subnets --filters "Name=vpc-id,Values=vpc-xxxxx" \
-  --query 'Subnets[*].[SubnetId, AvailabilityZone, CidrBlock]' --output table
+aws ec2 describe-subnets \
+  --filters "Name=vpc-id,Values=vpc-xxxxx" \
+  --query 'Subnets[*].[SubnetId, AvailabilityZone, CidrBlock]' \
+  --output table
 ```
 
 ### 1.3 Deploy Infrastructure
 
 ```bash
-# Navigate to terraform directory
 cd terraform
-
-# Copy example configuration
 cp terraform.tfvars.example terraform.tfvars
+# Edit terraform.tfvars: vpc_id, subnet_ids (≥2), domain_name, public_url
 
-# Edit with your values
-# - vpc_id: from step 1.2
-# - subnet_ids: at least 2 from the list
-# - domain_name: your domain (e.g., voice.thediscobass.com)
-nano terraform.tfvars
-
-# Initialize Terraform
 terraform init
-
-# Preview changes
 terraform plan -out=tfplan
-
-# Apply infrastructure
 terraform apply tfplan
-
-# Save outputs (important!)
 terraform output > deployment.outputs.txt
 ```
 
-**Outputs to save:**
+**Outputs to retain:**
+
 - `rds_cluster_endpoint`
 - `social_media_agent_public_ip`
 - `concierge_agent_public_ip`
-- `api_gateway_invite_url`
+- `api_gateway_invoke_url`
+- `twilio_voice_webhook_url`
 
 ---
 
@@ -120,197 +98,141 @@ terraform output > deployment.outputs.txt
 ### 2.1 Configure Environment
 
 ```bash
-# Navigate to API server directory
 cd api-server
-
-# Copy environment template
 cp .env.example .env
-
-# Edit .env with database and API credentials
-nano .env
+# Populate DB_HOST, DB_NAME, DB_USER, DB_PASSWORD from Terraform outputs
 ```
 
-**Required values from Terraform:**
+**Required values from Terraform output:**
+
 ```bash
-DB_HOST=[rds_cluster_endpoint from terraform output]
+DB_HOST=<rds_cluster_endpoint>
 DB_NAME=crystalcleardb
 DB_USER=postgres
-DB_PASSWORD=[database password from terraform output]
+DB_PASSWORD=<from terraform output>
 ```
 
-### 2.2 Deploy to EC2 Instance
+### 2.2 Deploy to EC2
 
-Option A: SSH into instance and deploy manually
+**Option A — Manual SSH deploy:**
 
 ```bash
-# SSH into one of the agent EC2 instances
-ssh -i your-key.pem ec2-user@[social-media-agent-public-ip]
+ssh -i your-key.pem ec2-user@<social-media-agent-public-ip>
 
-# Or into a dedicated API server (if deployed separately)
-ssh -i your-key.pem ec2-user@[api-server-public-ip]
-
-# Clone or upload this repository
-git clone https://github.com/the-steele-zone/crystal-clear-voices.git
+git clone https://github.com/crystalclearhouse-data/crystal-clear-voices.git
 cd crystal-clear-voices/api-server
-
-# Install dependencies
 npm install
+cp .env.example .env  # populate credentials
 
-# Copy environment file
-cp .env.example .env
-# Edit .env with your credentials
-nano .env
-
-# Start service
-npm start
-
-# Or use PM2 for production
+# Production process manager
 npm install -g pm2
 pm2 start index.js --name "crystal-clear-voices-api"
-pm2 save
-pm2 startup
+pm2 save && pm2 startup
 ```
 
-Option B: Deploy using Terraform user_data (automatic)
+**Option B — Terraform user_data (automatic):**
 
-The Terraform configuration includes user_data scripts that automatically:
-1. Install Node.js and npm
-2. Clone repository (if applicable)
-3. Install dependencies
-4. Start application
+The Terraform config includes `user_data` scripts that install Node.js, clone the repo,
+install dependencies, and start the application. Monitor bootstrap via:
 
-Check EC2 instance logs:
 ```bash
-ssh -i your-key.pem ec2-user@[instance-ip]
+ssh -i your-key.pem ec2-user@<instance-ip>
 sudo tail -f /var/log/user-data.log
 ```
 
 ### 2.3 Verify API Server
 
 ```bash
-# Test health endpoint
-curl http://[api-server-public-ip]:3000/health
-
-# Expected response:
-# {"status":"healthy","service":"Crystal Clear Voices API","timestamp":"..."}
+curl http://<api-server-public-ip>:3000/health
+# Expected: {"status":"healthy","service":"Crystal Clear Voices API","timestamp":"..."}
 ```
 
 ---
 
 ## Phase 3: n8n Workflow Setup
 
-### 3.1 Start n8n Instance
+### 3.1 Start n8n
 
-**Option A: Cloud.n8n.io (Recommended)**
-1. Go to [cloud.n8n.io](https://cloud.n8n.io)
-2. Sign up / log in
-3. Create new workspace
+**Option A — Cloud (recommended for production):**
 
-**Option B: Self-hosted n8n**
+1. Sign in at [cloud.n8n.io](https://cloud.n8n.io)
+2. Create a new workspace
+
+**Option B — Self-hosted Docker:**
+
 ```bash
 docker run -it --rm --name n8n -p 5678:5678 \
   -v ~/.n8n:/home/node/.n8n \
   n8nio/n8n
 ```
-Access at http://localhost:5678
+
+Access at `http://localhost:5678`.
 
 ### 3.2 Import Workflows
 
-**In n8n Dashboard:**
-1. Click **Workflows** → **Import from URL**
-2. Use: `https://github.com/the-steele-zone/crystal-clear-voices/n8n-workflows/social-media-agent.json`
-3. Click **Open** if it prompts
-
-Repeat for concierge workflow.
-
-**Or import manually:**
-1. Go to **Workflows**
-2. Click **+** → **Import**
-3. Select JSON file from `n8n-workflows/` folder
+1. n8n dashboard → **Workflows** → **Import**
+2. Upload JSON files from `n8n-workflows/`
 
 ### 3.3 Configure Credentials
 
-**Social Media Agent Workflow:**
+**Social Media workflow:**
 
-1. In the workflow, click nodes that have credential icons
-2. Add credentials for each service:
-   - **PostgreSQL**: Connection to RDS
-   - **Social Media APIs**: Twitter, Instagram, Facebook, LinkedIn tokens
-   - **HTTP Request nodes**: Any API authentication
+- PostgreSQL connection to RDS / Supabase
+- `META_PAGE_ACCESS_TOKEN`, `META_PAGE_ID`, `META_IG_USER_ID`
+- `TIKTOK_ACCESS_TOKEN`, `TIKTOK_OPEN_ID`
 
-**Concierge Agent Workflow:**
+**Concierge workflow:**
 
-1. Add **PostgreSQL** credentials
-2. Add **OpenAI** credentials (for information requests)
-3. Add **Booking Service API** credentials (your booking system)
-4. Add **Email** credentials (SMTP for notifications)
+- PostgreSQL connection
+- `ANTHROPIC_API_KEY` (Claude — `claude-sonnet-4-6`)
+- `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`
 
 ### 3.4 Configure Webhooks
 
-For each workflow:
-
-1. Click **Trigger node** (usually at the start)
-2. Copy the webhook URL
-3. Update your API server configuration:
+Copy the webhook URL from each trigger node and set the corresponding env var:
 
 ```bash
-# In your API server code or environment:
-
-# Social Media webhook
+# Social media agent
 SOCIAL_MEDIA_WEBHOOK_URL=https://n8n.example.com/webhook/social-media-webhook
 
-# Concierge webhook
+# Concierge agent
 CONCIERGE_WEBHOOK_URL=https://n8n.example.com/webhook/concierge-webhook
 ```
 
 ### 3.5 Test Workflows
 
-**Social Media Test:**
 ```bash
+# Social media
 curl -X POST https://n8n.example.com/webhook/social-media-webhook \
   -H "Content-Type: application/json" \
-  -d '{
-    "platform": "twitter",
-    "content": "Testing Crystal Clear Voices!"
-  }'
-```
+  -d '{"platform":"instagram","content":"Testing Crystal Clear Voices!"}'
 
-**Concierge Test:**
-```bash
+# Concierge
 curl -X POST https://n8n.example.com/webhook/concierge-webhook \
   -H "Content-Type: application/json" \
-  -d '{
-    "user_id": "test_123",
-    "request_type": "information",
-    "description": "What are your hours?"
-  }'
+  -d '{"user_id":"test_123","request_type":"information","description":"What are your hours?"}'
 ```
 
 ---
 
-## Phase 4: Domain & DNS Configuration
+## Phase 4: Domain and DNS Configuration
 
-### 4.1 Point Domain to API
+### 4.1 DNS Records
 
 ```bash
-# For API Gateway
-# Create CNAME record:
-# api.voice.thediscobass.com → [api_gateway_invoke_url]
+# API Gateway
+# CNAME: api.voice.thediscobass.com → <api_gateway_invoke_url>
 
-# For Direct EC2
-# Create A record:
-# api.voice.thediscobass.com → [api-server-public-ip]
+# Direct EC2
+# A:     api.voice.thediscobass.com → <api-server-public-ip>
 
-# For n8n
-# Create CNAME record:
-# n8n.voice.thediscobass.com → cloud.n8n.io (or your n8n host)
+# n8n (if self-hosted)
+# CNAME: n8n.voice.thediscobass.com → <n8n-host>
 ```
 
-### 4.2 SSL/TLS Certificate
+### 4.2 TLS Certificate (ACM)
 
-Using AWS Certificate Manager:
 ```bash
-# Request certificate
 aws acm request-certificate \
   --domain-name voice.thediscobass.com \
   --subject-alternative-names \
@@ -323,85 +245,54 @@ aws acm request-certificate \
 
 ## Phase 5: Integration Testing
 
-### Full workflow test:
-
 ```bash
-# 1. Create social media post via API
+# Create a social media post
 curl -X POST http://api.voice.thediscobass.com/api/social-media/post \
   -H "Content-Type: application/json" \
-  -d '{
-    "platform": "twitter",
-    "content": "Hello from Crystal Clear Voices!",
-    "hashtags": ["crystal", "voices"]
-  }'
+  -d '{"platform":"instagram","content":"Hello from Crystal Clear Voices!"}'
 
-# 2. Create concierge request
+# Submit a concierge request
 curl -X POST http://api.voice.thediscobass.com/api/concierge/request \
   -H "Content-Type: application/json" \
-  -d '{
-    "user_id": "test_001",
-    "request_type": "booking",
-    "description": "Book a dinner reservation for 4 at my favorite restaurant",
-    "priority": "high"
-  }'
+  -d '{"user_id":"test_001","request_type":"information","description":"What are your hours?","priority":"normal"}'
 
-# 3. Check request status
+# Poll request status
 curl http://api.voice.thediscobass.com/api/concierge/requests/1
 
-# 4. Get analytics
+# Analytics
 curl http://api.voice.thediscobass.com/api/analytics/social-media
 curl http://api.voice.thediscobass.com/api/analytics/concierge
 ```
 
 ---
 
-## Phase 6: Monitoring & Maintenance
+## Phase 6: Monitoring and Maintenance
 
-### View Logs
+### Application Logs
 
-**API Server Logs:**
 ```bash
-# SSH into instance
-ssh -i your-key.pem ec2-user@[api-server-ip]
-
-# View application logs
+ssh -i your-key.pem ec2-user@<api-server-ip>
 pm2 logs crystal-clear-voices-api
-
-# Or systemd logs
-sudo journalctl -u crystal-clear-voices -f
+# or: sudo journalctl -u crystal-clear-voices -f
 ```
 
-**n8n Logs:**
-- View execution history in n8n dashboard
-- Set up error notifications to Slack/Email
+### n8n Execution Logs
 
-**Database Logs:**
+- Dashboard → Workflows → click workflow → **Executions**
+- Configure error notifications to Slack or Discord
+
+### Database Logs (RDS CloudWatch)
+
 ```bash
-# Check RDS CloudWatch logs
 aws logs tail /aws/rds/instance/crystal-clear-voices-cluster/postgresql
 ```
 
-### Database Backups
+### Manual Database Snapshot
 
 ```bash
-# Automated snapshots (7 days retention)
-# Configured in Terraform
-
-# Manual snapshot
 aws rds create-db-cluster-snapshot \
   --db-cluster-identifier crystal-clear-voices-cluster \
   --db-cluster-snapshot-identifier manual-backup-$(date +%F)
-```
-
-### Auto-scaling (Optional)
-
-```bash
-# Configure auto-scaling group in Terraform for production
-# Add to main.tf:
-
-resource "aws_autoscaling_group" "api_servers" {
-  # ... configuration
-}
 ```
 
 ---
@@ -409,103 +300,75 @@ resource "aws_autoscaling_group" "api_servers" {
 ## Phase 7: Production Checklist
 
 - [ ] Terraform infrastructure deployed
-- [ ] RDS database accessible
+- [ ] RDS database accessible from EC2 security group
 - [ ] API server running and health checks passing
-- [ ] n8n workflows imported and configured
-- [ ] All credentials stored in .env (git-ignored)
-- [ ] SSL/TLS certificates configured
-- [ ] DNS records pointing to services
-- [ ] Monitoring and alerts configured
-- [ ] Database backups enabled
-- [ ] Load testing completed
-- [ ] Security groups properly restricted
-- [ ] Cost monitoring set up (AWS Budgets)
+- [ ] n8n workflows imported, credentials configured, and activated
+- [ ] All secrets stored in `.env` (git-ignored)
+- [ ] TLS certificates issued and attached
+- [ ] DNS records resolving correctly
+- [ ] Monitoring and failure alerts configured
+- [ ] Automated RDS snapshots enabled (7-day retention)
+- [ ] Load test completed for expected traffic volume
+- [ ] Security groups restricted to minimum required ingress
+- [ ] AWS Budgets alert configured
 
 ---
 
-## Rollback Procedure
-
-If something goes wrong:
+## Rollback
 
 ```bash
-# Destroy all infrastructure
 cd terraform
 terraform destroy
-
-# This will prompt for confirmation and delete:
-# - EC2 instances
-# - RDS cluster
-# - Security groups
-# - API Gateway
-# - All associated resources
+# Destroys: EC2 instances, RDS cluster, security groups, API Gateway, and all associated resources
 ```
 
 ---
 
-## Cost Estimation
+## Cost Estimate (Monthly)
 
-**Monthly costs (approximate):**
-- 2x t3.medium EC2 instances: $30
-- RDS Aurora (db.t3.micro): $20
-- Data transfer: $10
-- API Gateway: $3.50
-- **Total: ~$63.50/month**
+| Resource | Cost |
+| --- | --- |
+| 2× t3.medium EC2 | ~$30 |
+| RDS Aurora db.t3.micro | ~$20 |
+| Data transfer | ~$10 |
+| API Gateway | ~$3.50 |
+| **Total** | **~$63.50** |
 
-See [AWS Pricing Calculator](https://calculator.aws/) for exact estimates.
+See [AWS Pricing Calculator](https://calculator.aws/) for project-specific estimates.
 
 ---
 
 ## Troubleshooting
 
 ### Database connection refused
-```bash
-# Check security group allows traffic from EC2
-aws ec2 describe-security-groups --group-ids sg-xxxxx
 
-# Test connection
-psql -h [rds-endpoint] -U postgres -d crystalcleardb
+```bash
+aws ec2 describe-security-groups --group-ids sg-xxxxx
+psql -h <rds-endpoint> -U postgres -d crystalcleardb
 ```
 
 ### n8n webhooks not firing
+
 ```bash
-# Check webhook URL is accessible
+# Verify webhook URL is reachable
 curl https://n8n.example.com/webhook/social-media-webhook
 
-# View n8n execution logs
-# Dashboard → Workflows → Click workflow → Executions
+# Check execution history
+# Dashboard → Workflows → click workflow → Executions
 ```
 
 ### API server not starting
+
 ```bash
-# Check logs
 pm2 logs crystal-clear-voices-api
-
-# Verify environment variables
-echo $DB_HOST
-echo $DB_NAME
-
-# Check database connection
+echo $DB_HOST && echo $DB_NAME
 npm run test:db
 ```
 
 ---
 
-## Next Steps
+## References
 
-1. **Custom domain setup** - Point your DNS to the API
-2. **Authentication** - Implement JWT tokens for API security
-3. **Rate limiting** - Add request throttling per user
-4. **Caching** - Implement Redis for performance
-5. **Multi-region** - Deploy to additional AWS regions
-6. **Analytics dashboard** - Build web dashboard for metrics
-7. **Mobile app** - Create mobile frontend for concierge
-
----
-
-## Support
-
-For issues or questions:
-1. Check logs in `/var/log` or PM2
-2. Review [API Documentation](./api-server/README.md)
-3. Check [n8n Workflows](./n8n-workflows/README.md)
-4. Review [Terraform Configuration](./terraform/README.md)
+- [API Server Documentation](./api-server/README.md)
+- [n8n Workflow Documentation](./n8n-workflows/README.md)
+- [Terraform Configuration](./terraform/README.md)
