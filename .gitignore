@@ -50,3 +50,7 @@ terraform/terraform.tfvars
 # Runtime dirs
 .pids/
 .logs/
+
+# Local-only sibling/child repos and snapshots
+loopkeeper-curriculum/
+backup/

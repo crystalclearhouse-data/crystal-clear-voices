@@ -3,6 +3,12 @@ name: Deploy
 on:
   push:
     branches: [main]
+    paths:
+      - 'api-server/**'
+      - 'voice-server/**'
+      - 'docker-compose.yml'
+      - '.github/workflows/deploy.yml'
+      - 'terraform/**'
   workflow_dispatch:
 
 env:
@@ -106,7 +112,7 @@ jobs:
     name: Notify on Failure
     runs-on: ubuntu-latest
     needs: [build, deploy]
-    if: failure()
+    if: ${{ failure() && secrets.DISCORD_DEPLOY_WEBHOOK != '' }}
 
     steps:
       - name: Post to Discord

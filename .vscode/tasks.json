@@ -71,6 +71,43 @@
     },
 
     // ─────────────────────────────────────────────────────────────────────────
+    // N8N
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+      "label": "n8n: Start",
+      "type": "shell",
+      "command": "docker-compose -f ${workspaceFolder}/docker-compose.yml up -d n8n",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "n8n: Stop",
+      "type": "shell",
+      "command": "docker-compose -f ${workspaceFolder}/docker-compose.yml stop n8n",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "n8n: Logs",
+      "type": "shell",
+      "command": "docker-compose -f ${workspaceFolder}/docker-compose.yml logs -f n8n",
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "new" },
+      "problemMatcher": [],
+      "isBackground": true
+    },
+    {
+      "label": "n8n: Open UI",
+      "type": "shell",
+      "command": "open http://localhost:5678",
+      "group": "test",
+      "presentation": { "reveal": "silent", "panel": "shared" },
+      "problemMatcher": []
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
     // LOGS
     // ─────────────────────────────────────────────────────────────────────────
     {
@@ -109,6 +146,14 @@
       "command": "git -C ${workspaceFolder} push origin main",
       "group": "test",
       "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Audit: GitHub SSOT",
+      "type": "shell",
+      "command": "bash ${workspaceFolder}/scripts/audit-ssot.sh",
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "new", "focus": true },
       "problemMatcher": []
     },
 
