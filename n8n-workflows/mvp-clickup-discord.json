@@ -1,0 +1,200 @@
+{
+  "name": "MVP — ClickUp Webhook → Discord Alert",
+  "description": "Beginner-friendly HITL MVP: receive a ClickUp event, validate payload, format details, check human approval, then notify Discord or return rejected",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Start Here\nThis workflow listens for a task event from ClickUp and only sends a Discord alert after human approval.\n\nFlow: **ClickUp event → validate payload → format details → approval check → approved: Discord + success / rejected: return rejected**",
+        "height": 180,
+        "width": 420,
+        "color": 4
+      },
+      "id": "note-overview",
+      "name": "Overview Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [80, 80]
+    },
+    {
+      "parameters": {
+        "content": "## HITL Decision Rule\nThis version already includes a human approval gate.\n\nUse input field: **human_approved**\n- true = send to Discord\n- false (or missing) = do not send; return rejected",
+        "height": 220,
+        "width": 430,
+        "color": 6
+      },
+      "id": "note-hitl",
+      "name": "HITL Placement Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [360, 60]
+    },
+    {
+      "parameters": {},
+      "id": "webhook",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [100, 300],
+      "webhookId": "clickup-mvp-trigger",
+      "notesInFlow": true,
+      "notes": "Start point. ClickUp sends data here when a task event happens (for example: task created or updated)."
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst task = body.task || body;\nconst hasTaskId = Boolean(task.id);\nconst hasTaskName = Boolean(task.name);\n\nreturn [{\n  json: {\n    task_id: task.id || 'unknown',\n    task_name: task.name || 'Untitled Task',\n    task_description: task.description || '',\n    list_name: task.list?.name || 'Unknown List',\n    status: task.status?.status || 'open',\n    priority: task.priority?.priority || 'none',\n    assignees: task.assignees?.map(a => a.username).join(', ') || 'Unassigned',\n    url: task.url || '',\n    created_at: task.date_created || new Date().toISOString(),\n    human_approved: body.human_approved === true,\n    is_valid_payload: hasTaskId && hasTaskName\n  }\n}];"
+      },
+      "id": "parse-task",
+      "name": "Prepare Task Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300],
+      "notesInFlow": true,
+      "notes": "This step cleans and organizes task details into one consistent format. It also reads human_approved (true/false) and marks whether the payload includes the minimum required fields."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.is_valid_payload }}",
+              "operation": "isTrue"
+            }
+          ]
+        }
+      },
+      "id": "payload-validity-check",
+      "name": "Payload Validity Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "notesInFlow": true,
+      "notes": "Friendly guardrail. If required data is missing, this path returns a clear error message instead of failing later."
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"status\": \"invalid_payload\",\n  \"message\": \"Missing required task fields. Please include both task.id and task.name in the webhook payload.\",\n  \"task_id\": \"{{ $('parse-task').item.json.task_id }}\",\n  \"task_name\": \"{{ $('parse-task').item.json.task_name }}\"\n}"
+      },
+      "id": "return-invalid",
+      "name": "Return Invalid Payload",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [700, 430],
+      "notesInFlow": true,
+      "notes": "Used when the webhook payload is incomplete. This gives a human-readable fix message."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.human_approved }}",
+              "operation": "isTrue"
+            }
+          ]
+        }
+      },
+      "id": "approval-gate",
+      "name": "Approval Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [700, 260],
+      "notesInFlow": true,
+      "notes": "Decision step. If human_approved is true, continue to Discord. If not, stop notification and return rejected."
+    },
+    {
+      "parameters": {
+        "message": "🚨 NEW CLICKUP TASK\n\n📋 **{{ $json.task_name }}**\nList: {{ $json.list_name }}\nStatus: {{ $json.status }}\nPriority: {{ $json.priority }}\nAssigned to: {{ $json.assignees }}\n\n📝 Description:\n{{ $json.task_description }}\n\n🔗 Link: {{ $json.url }}"
+      },
+      "id": "discord-notify",
+      "name": "Send Discord Notification",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 1,
+      "position": [900, 180],
+      "credentials": {
+        "discordBotApi": "discord_webhook"
+      },
+      "notesInFlow": true,
+      "notes": "Runs only after approval. Posts a human-readable task summary to Discord so the team can react quickly."
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"status\": \"success\",\n  \"message\": \"Task received and notified\",\n  \"task_id\": \"{{ $('parse-task').item.json.task_id }}\",\n  \"task_name\": \"{{ $('parse-task').item.json.task_name }}\"\n}"
+      },
+      "id": "return-success",
+      "name": "Return Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1120, 180],
+      "notesInFlow": true,
+      "notes": "Sends success only for approved requests (after Discord send)."
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"status\": \"rejected\",\n  \"message\": \"Human approval required before Discord notification\",\n  \"task_id\": \"{{ $('parse-task').item.json.task_id }}\",\n  \"task_name\": \"{{ $('parse-task').item.json.task_name }}\"\n}"
+      },
+      "id": "return-rejected",
+      "name": "Return Rejected",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1120, 340],
+      "notesInFlow": true,
+      "notes": "Used when approval is false or missing. No Discord message is sent on this path."
+    },
+    {
+      "parameters": {
+        "content": "## Beginner Testing\n1) Send payload with human_approved = true\n2) Confirm Discord message appears and response is success\n3) Send payload with human_approved = false\n4) Confirm no Discord post and response is rejected\n5) Send payload missing task.id or task.name\n6) Confirm response is invalid_payload with a friendly fix message\n\nIf one step fails, check the previous node output first.",
+        "height": 210,
+        "width": 390,
+        "color": 5
+      },
+      "id": "note-testing",
+      "name": "Testing Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1180, 70]
+    },
+    {
+      "parameters": {
+        "content": "## Good Payload Template (Copy/Paste)\nUse this shape for reliable tests:\n\n{\n  \"human_approved\": true,\n  \"task\": {\n    \"id\": \"123\",\n    \"name\": \"Follow up with client\",\n    \"description\": \"Call at 2pm\",\n    \"list\": { \"name\": \"Sales\" },\n    \"status\": { \"status\": \"open\" },\n    \"priority\": { \"priority\": \"high\" },\n    \"assignees\": [{ \"username\": \"alex\" }],\n    \"url\": \"https://app.clickup.com/t/123\"\n  }\n}\n\nTip: change human_approved to false to test rejected path.",
+        "height": 420,
+        "width": 420,
+        "color": 7
+      },
+      "id": "note-good-payload",
+      "name": "Good Payload Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1180, 320]
+    }
+  ],
+  "connections": {
+    "webhook": {
+      "main": [[{ "node": "parse-task", "type": "main", "index": 0 }]]
+    },
+    "parse-task": {
+      "main": [[{ "node": "payload-validity-check", "type": "main", "index": 0 }]]
+    },
+    "payload-validity-check": {
+      "main": [
+        [{ "node": "approval-gate", "type": "main", "index": 0 }],
+        [{ "node": "return-invalid", "type": "main", "index": 0 }]
+      ]
+    },
+    "approval-gate": {
+      "main": [
+        [{ "node": "discord-notify", "type": "main", "index": 0 }],
+        [{ "node": "return-rejected", "type": "main", "index": 0 }]
+      ]
+    },
+    "discord-notify": {
+      "main": [[{ "node": "return-success", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "triggerCount": 0,
+  "pinData": {}
+}

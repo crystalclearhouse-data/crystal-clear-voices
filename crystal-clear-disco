@@ -1,0 +1,124 @@
+# Crystal Clear Data — Hashtag Index
+
+## Tagging Method (Systematic + Infrastructure-Leveraged)
+
+- **Layer 1 (Domain):** `#infra` `#backend` `#voice` `#automation` `#data` `#docs` `#ops`
+- **Layer 2 (Capability):** `#api` `#mcp` `#terraform` `#docker` `#n8n` `#db` `#ai-agent` `#workflow-cli`
+- **Layer 3 (Lifecycle):** `#prod` `#staging` `#dev` `#template` `#experimental` `#audit` `#security`
+
+Use 3–6 tags per item: `domain + capability + lifecycle (+ optional context)`.
+
+### Controlled Chaos Overlay (Minimal)
+
+Add **at most 2** of these overlays per item when useful:
+
+- **Criticality:** `#critical-path` `#tier1` `#tier2`
+- **Ownership:** `#owner-platform` `#owner-growth` `#owner-automation`
+- **Risk:** `#low-risk` `#migration` `#breaking-change`
+- **Security:** `#public-surface` `#internal-only` `#secrets-touching`
+- **Maturity:** `#triage` `#validated` `#active`
+
+Rule: if tags become noisy, keep only `criticality + ownership`.
+
+---
+
+## Relevant Folders → Hashtags
+
+- `/api-server` → #backend #api #express #db #automation #prod #tier1 #owner-platform
+- `/voice-server` → #voice #backend #twilio #elevenlabs #mcp #prod #critical-path #public-surface
+- `/crew-service` → #ai-agent #backend #fastapi #python #orchestration #dev #tier2 #owner-automation
+- `/webhook-server` → #backend #webhook #integration #automation #dev #tier2 #owner-automation
+- `/workflows` → #automation #n8n #workflow-catalog #ops
+- `/workflows/Production` → #automation #n8n #prod #critical-path #active
+- `/workflows/Agent-Experiments` → #automation #ai-agent #experimental #r-and-d
+- `/workflows/Connector-Explorations` → #automation #integration #experimental #connectors
+- `/workflows/Content-Creation` → #automation #content-pipeline #ai-agent #testing
+- `/workflows/Infrastructure` → #infra #automation #n8n #ops
+- `/workflows/Other` → #automation #backlog #unprocessed #triage #owner-automation
+- `/n8n-workflows` → #automation #n8n #importable #blueprints
+- `/terraform` → #infra #terraform #aws #iac #prod #tier1 #secrets-touching
+- `/supabase` → #data #db #supabase #migrations #staging
+- `/prisma` → #data #orm #schema #backend
+- `/scripts` → #ops #devx #bootstrap #automation #low-risk
+- `/tools/workflow-cli` → #tooling #workflow-cli #typescript #automation
+- `/dashboard` → #frontend #dashboard #reporting #ops
+- `/mcp-automation-hub` → #mcp #automation #patterns #docs
+- `/backup` → #backup #recovery #ops #data
+- `/environments` → #infra #config #environment #prod
+- `/loopkeeper-curriculum` → #docs #training #case-study
+- `/templates` → #template #scaffold #infra #automation
+
+---
+
+## Relevant Root Files → Hashtags
+
+- `/README.md` → #docs #overview #architecture #onboarding #owner-platform
+- `/DEPLOYMENT.md` → #docs #deployment #infra #runbook #prod #owner-platform
+- `/GRADUATION_CRITERIA.md` → #docs #workflow-governance #quality-gates
+- `/docker-compose.yml` → #infra #docker #local-dev #orchestration #tier2 #owner-platform
+- `/package.json` → #nodejs #dependencies #workspace #tooling
+- `/mcp-server.js` → #mcp #server #integration #automation #internal-only
+- `/mcp-audit.js` → #mcp #audit #governance #ops #owner-platform
+- `/mcp-paths.js` → #mcp #filesystem-scope #security #tier1
+- `/postgres-mcp.js` → #mcp #postgres #db #read-only #owner-platform
+- `/cli.ts` → #tooling #typescript #cli
+- `/setup-webhook.sh` → #ops #webhook #bootstrap #public-surface
+- `/.mcp.json` → #mcp #config #integrations #security #tier1
+- `/.env.example` → #config #environment #secrets-template #secrets-touching
+- `/.agents/authority.md` → #governance #agent-boundaries #security #owner-platform
+
+---
+
+## Service-Level Key Files → Hashtags
+
+- `/api-server/index.js` → #backend #api #express #db #owner-platform
+- `/api-server/Dockerfile` → #infra #docker #backend
+- `/voice-server/server.js` → #voice #backend #runtime #owner-platform
+- `/voice-server/social-mcp.js` → #voice #mcp #social-integration #owner-growth
+- `/voice-server/talk.js` → #voice #tts #conversation-flow
+- `/crew-service/main.py` → #ai-agent #backend #orchestration #owner-automation
+- `/crew-service/configs/crew.json` → #ai-agent #config #orchestration
+- `/crew-service/configs/client-intake-schema.json` → #schema #intake #validation
+- `/crew-service/configs/creator-intake-schema.json` → #schema #intake #validation
+
+---
+
+## Infra + Automation Key Files → Hashtags
+
+- `/terraform/main.tf` → #infra #terraform #aws #iac #tier1 #owner-platform
+- `/terraform/variables.tf` → #infra #terraform #config #secrets-touching #owner-platform
+- `/terraform/outputs.tf` → #infra #terraform #outputs #tier2
+- `/terraform/user_data_social_agent.sh` → #infra #bootstrap #social-agent
+- `/terraform/user_data_concierge_agent.sh` → #infra #bootstrap #concierge-agent
+- `/scripts/dev-up.sh` → #ops #startup #local-dev #owner-platform
+- `/scripts/dev-down.sh` → #ops #shutdown #local-dev #owner-platform
+- `/scripts/audit-ssot.sh` → #audit #ops #source-of-truth #validated
+- `/workflows/index.json` → #automation #n8n #registry #metadata #owner-automation
+- `/n8n-workflows/social-media-agent.json` → #automation #n8n #social #agent #owner-growth
+- `/n8n-workflows/concierge-agent.json` → #automation #n8n #concierge #agent #owner-automation
+
+---
+
+## Optional Naming Pattern for Future Assets
+
+When adding new files/folders, tag in docs/PRs using:
+
+`#<domain> #<capability> #<lifecycle> [#optional-context]`
+
+Minimal controlled-chaos variant:
+
+`#<domain> #<capability> #<lifecycle> #<criticality> #<owner>`
+
+Example:
+
+`/workflows/Production/sophie-engagement-webhook.json` → `#automation #n8n #prod #engagement`
+
+---
+
+## Governance Rules (Controlled Chaos)
+
+- Use **3 base tags minimum**: `domain + capability + lifecycle`.
+- Add **max 2 overlay tags** (`criticality`, `owner`, `risk`, `security`, or `maturity`).
+- For any `#tier1` or `#critical-path` asset, include exactly **1 owner tag**.
+- Prefer one maturity lane only: `#triage → #validated → #active`.
+- If uncertain, choose fewer tags and default to `#owner-platform`.
