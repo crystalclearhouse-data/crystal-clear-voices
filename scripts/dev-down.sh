@@ -34,9 +34,14 @@ lsof -ti :3001 | xargs kill -9 2>/dev/null || true
 lsof -ti :3000 | xargs kill -9 2>/dev/null || true
 
 if command -v docker &> /dev/null; then
-  cd "$ROOT_DIR/n8n-local"
-  docker-compose down 2>/dev/null || true
-  log_info "Stopped Docker containers"
+  N8N_DIR="$(dirname "$ROOT_DIR")/n8n-local"
+  if [ -d "$N8N_DIR" ]; then
+    cd "$N8N_DIR"
+    docker-compose down 2>/dev/null || true
+    log_info "Stopped Docker containers"
+  else
+    log_info "n8n-local not found, skipping Docker shutdown"
+  fi
 fi
 
 log_info "Stack stopped"

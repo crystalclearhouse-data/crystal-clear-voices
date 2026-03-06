@@ -48,8 +48,15 @@ Production AI voice concierge and social media automation platform for The Steel
 ## Quick Start (Local Dev)
 
 ```bash
+# One-time setup for local env files
+cp voice-server/.env.example voice-server/.env
+cp webhook-server/.env.example webhook-server/.env
+
 # Start all services + MCP preflight check
 bash scripts/dev-up.sh
+
+# Quick health check (beginner-friendly)
+bash scripts/dev-check.sh
 
 # Stop all services
 bash scripts/dev-down.sh
@@ -63,6 +70,24 @@ curl -X POST http://localhost:3001/speak \
   -H "Content-Type: application/json" \
   -d '{"message": "Hello from Sophie"}'
 ```
+
+---
+
+## Beginner Runbook (MVP)
+
+1. **Set local env files**
+  - Copy both `.env.example` files to `.env` in `voice-server` and `webhook-server`.
+2. **Start services**
+  - Run `bash scripts/dev-up.sh`.
+3. **Verify health**
+  - Run `bash scripts/dev-check.sh` and confirm no failed checks.
+4. **Test HITL workflow**
+  - Import `n8n-workflows/mvp-clickup-discord.json` in n8n.
+  - Send one approved payload and one rejected payload.
+5. **Shut down cleanly**
+  - Run `bash scripts/dev-down.sh`.
+
+If anything fails, check logs in `.logs/` first (`voice-server.log`, `webhook-server.log`, `crew-service.log`).
 
 ---
 
