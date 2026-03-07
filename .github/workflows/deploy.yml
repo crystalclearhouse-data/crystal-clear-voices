@@ -61,6 +61,13 @@ env:
   AWS_REGION: us-east-1
   ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Default permissions — locked down. Jobs that need AWS OIDC or GitHub
+# Deployments API explicitly declare id-token:write / deployments:write.
+# ─────────────────────────────────────────────────────────────────────────────
+permissions:
+  contents: read
+
 jobs:
   # ─────────────────────────────────────────────────────────────────────────────
   # LINT & TEST — runs on every push, PR, and tag
@@ -175,6 +182,11 @@ jobs:
     needs: prepare
     if: vars.ENABLE_DEPLOY == 'true'
 
+    # OIDC federation requires id-token:write — no stored AWS keys needed.
+    permissions:
+      contents:    read
+      id-token:    write   # ← lets GitHub mint the OIDC JWT for AWS STS
+
     strategy:
       fail-fast: false
       matrix:
@@ -183,12 +195,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials (OIDC — no static keys)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region:     ${{ env.AWS_REGION }}
+          # JWT is minted automatically by the action using the OIDC token.
+          # IAM trust policy restricts assumption to tag pushes on this repo.
 
       - name: Log in to ECR
         uses: aws-actions/amazon-ecr-login@v2
@@ -233,15 +246,58 @@ jobs:
     if: vars.ENABLE_DEPLOY == 'true'
     environment: ${{ needs.prepare.outputs.environment }}
 
+    permissions:
+      contents:     read
+      id-token:     write       # AWS OIDC
+      deployments:  write       # GitHub Deployments API
+      statuses:     write       # GitHub commit statuses
+
+    outputs:
+      deployment_id: ${{ steps.gh_deploy_create.outputs.deployment_id }}
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
+      # ── Create GitHub Deployment record (visible in repo → Deployments) ──
+      - name: Create GitHub deployment
+        id: gh_deploy_create
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const env = '${{ needs.prepare.outputs.environment }}';
+            const services = JSON.parse('${{ needs.prepare.outputs.services }}');
+            const d = await github.rest.repos.createDeployment({
+              owner:             context.repo.owner,
+              repo:              context.repo.repo,
+              ref:               context.ref,
+              environment:       env,
+              description:       `Deploy [${services.join(', ')}] → ${env}`,
+              required_contexts: [],   // skip branch-protection status checks
+              auto_merge:        false,
+              transient_environment: env !== 'production',
+              production_environment: env === 'production',
+            });
+            core.setOutput('deployment_id', d.data.id);
+            console.log(`Created deployment ${d.data.id}`);
+
+      - name: Set deployment status → in_progress
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createDeploymentStatus({
+              owner:         context.repo.owner,
+              repo:          context.repo.repo,
+              deployment_id: '${{ steps.gh_deploy_create.outputs.deployment_id }}',
+              state:         'in_progress',
+              log_url:       `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`,
+              description:   'Deploy in progress',
+            });
+
+      - name: Configure AWS credentials (OIDC — no static keys)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region:     ${{ env.AWS_REGION }}
 
       - name: Resolve EC2 target
         id: target
@@ -280,8 +336,10 @@ jobs:
             --query "Command.CommandId"
 
       - name: Health checks
+        id: health
         run: |
           sleep 20
+          FAILED=0
           declare -A HEALTH_URLS=(
             ["voice-server"]="https://voice.thediscobass.com/health"
             ["api-server"]="https://api.voice.thediscobass.com/health"
@@ -295,9 +353,49 @@ jobs:
               echo "Checking $svc → $URL"
               curl --retry 5 --retry-delay 5 --retry-connrefused --silent --fail "$URL" \
                 && echo "✅ $svc healthy" \
-                || echo "⚠️  $svc health check failed (non-blocking — check logs)"
+                || { echo "⚠️  $svc failed health check"; FAILED=1; }
             fi
           done
+          echo "any_failed=$FAILED" >> "$GITHUB_OUTPUT"
+
+      # ── Update GitHub Deployment record with final status ──────────────────
+      - name: Set deployment status → success
+        if: steps.health.outputs.any_failed == '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const envUrls = {
+              'voice-server':   'https://voice.thediscobass.com',
+              'api-server':     'https://api.voice.thediscobass.com',
+              'webhook-server': 'https://hooks.voice.thediscobass.com',
+              'crew-service':   'https://crew.voice.thediscobass.com',
+              'mcp-server':     'https://mcp.voice.thediscobass.com',
+            };
+            const services = JSON.parse('${{ needs.prepare.outputs.services }}');
+            const envUrl = envUrls[services[0]] ?? 'https://voice.thediscobass.com';
+            await github.rest.repos.createDeploymentStatus({
+              owner:         context.repo.owner,
+              repo:          context.repo.repo,
+              deployment_id: '${{ steps.gh_deploy_create.outputs.deployment_id }}',
+              state:         'success',
+              environment_url: envUrl,
+              log_url:       `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`,
+              description:   'All health checks passed',
+            });
+
+      - name: Set deployment status → failure
+        if: steps.health.outputs.any_failed == '1'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createDeploymentStatus({
+              owner:         context.repo.owner,
+              repo:          context.repo.repo,
+              deployment_id: '${{ steps.gh_deploy_create.outputs.deployment_id }}',
+              state:         'failure',
+              log_url:       `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`,
+              description:   'One or more health checks failed — check service logs',
+            });
 
   # ─────────────────────────────────────────────────────────────────────────────
   # NOTIFY ON FAILURE

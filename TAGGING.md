@@ -75,13 +75,52 @@ Configure approvers in **GitHub → Settings → Environments → production**.
 
 ## GitHub Repository Variables / Secrets
 
-| Name                    | Where         | Purpose                          |
-|-------------------------|---------------|----------------------------------|
-| `ENABLE_DEPLOY`         | Var           | Set to `true` to activate builds |
-| `AWS_ACCOUNT_ID`        | Secret        | ECR registry prefix              |
-| `AWS_ACCESS_KEY_ID`     | Secret        | CI IAM user key                  |
-| `AWS_SECRET_ACCESS_KEY` | Secret        | CI IAM user secret               |
-| `DISCORD_DEPLOY_WEBHOOK`| Secret        | Failure alerts                   |
+No long-lived AWS credentials. Authentication uses GitHub OIDC → AWS IAM role
+assumption (short-lived STS tokens, automatically rotated every workflow run).
+
+| Name                    | Type    | Purpose                                          |
+|-------------------------|---------|--------------------------------------------------|
+| `ENABLE_DEPLOY`         | Var     | Set to `true` to activate builds and deploys     |
+| `AWS_ACCOUNT_ID`        | Secret  | ECR registry prefix (`<id>.dkr.ecr…`)            |
+| `AWS_DEPLOY_ROLE_ARN`   | Secret  | IAM role ARN output by `terraform apply` (OIDC)  |
+| `DISCORD_DEPLOY_WEBHOOK`| Secret  | Discord channel for failure alerts               |
+
+**Removed** (no longer needed — delete from GitHub Secrets if they exist):
+
+| ~~`AWS_ACCESS_KEY_ID`~~     | ~~long-lived key — replaced by OIDC~~ |
+| ~~`AWS_SECRET_ACCESS_KEY`~~ | ~~long-lived secret — replaced by OIDC~~ |
+
+### One-time OIDC bootstrap
+
+```bash
+# 1. Apply terraform to create the OIDC provider + deploy role
+terraform apply -var-file=environments/production.tfvars
+
+# 2. Capture the output ARN
+terraform output github_actions_deploy_role_arn
+# → arn:aws:iam::<account>:role/crystal-clear-voices-github-actions-deploy
+
+# 3. Add to GitHub secrets
+gh secret set AWS_DEPLOY_ROLE_ARN --body "arn:aws:iam::..."
+gh secret set AWS_ACCOUNT_ID      --body "<your-aws-account-id>"
+
+# 4. Delete the old static keys
+gh secret delete AWS_ACCESS_KEY_ID
+gh secret delete AWS_SECRET_ACCESS_KEY
+```
+
+### Local GitHub App JWT (for API calls, not CI)
+
+```bash
+# Install deps once
+pip install PyJWT cryptography requests
+
+# Generate JWT only
+python3 scripts/gen-github-jwt.py --pem ~/.secrets/gh-app.pem --app-id YOUR_APP_ID
+
+# Generate JWT + exchange for 1-hour installation token
+python3 scripts/gen-github-jwt.py --pem ~/.secrets/gh-app.pem --app-id YOUR_APP_ID --token
+```
 
 ---
 
@@ -90,9 +129,11 @@ Configure approvers in **GitHub → Settings → Environments → production**.
 ```
 push tag  →  [test]  →  [prepare]  →  [build: matrix]  →  [deploy]  →  [notify on failure]
                |            |               |                   |
-             always    parses tag      only affected       SSM command to
-             runs      → services      services built      correct EC2 fleet
-                       → environment   in parallel
+             always    parses tag      OIDC → ECR push     OIDC → SSM
+             runs      → services      only affected       create GitHub
+                       → environment   services in         Deployment record
+                                       parallel            + health checks
+                                                           + update status
 ```
 
 ### `prepare` job outputs

@@ -335,3 +335,136 @@ resource "aws_apigatewayv2_stage" "prod" {
     Name = "${var.project_name}-prod-stage"
   }
 }
+
+# ============================================================================
+# GITHUB ACTIONS OIDC — keyless CI/CD (no long-lived AWS keys in secrets)
+# ============================================================================
+# How it works:
+#   1. GitHub mints a short-lived OIDC JWT for every workflow run.
+#   2. The JWT is presented to AWS STS AssumeRoleWithWebIdentity.
+#   3. AWS validates the JWT signature against GitHub's OIDC public keys.
+#   4. If the sub claim matches the trust policy, STS returns a temp role token.
+#   5. configure-aws-credentials@v4 uses role-to-assume — no keys stored.
+#
+# Once applied, remove AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY from GitHub
+# secrets and replace with AWS_DEPLOY_ROLE_ARN = the output of this module.
+# ============================================================================
+
+data "tls_certificate" "github_oidc" {
+  url = "https://token.actions.githubusercontent.com/.well-known/openid-configuration"
+}
+
+resource "aws_iam_openid_connect_provider" "github_actions" {
+  url             = "https://token.actions.githubusercontent.com"
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = [data.tls_certificate.github_oidc.certificates[0].sha1_fingerprint]
+
+  tags = {
+    Name = "${var.project_name}-github-oidc-provider"
+  }
+}
+
+resource "aws_iam_role" "github_actions_deploy" {
+  name = "${var.project_name}-github-actions-deploy"
+  description = "Assumed by GitHub Actions OIDC — tag-triggered deploys only"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect    = "Allow"
+        Principal = { Federated = aws_iam_openid_connect_provider.github_actions.arn }
+        Action    = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+          }
+          StringLike = {
+            # Restrict to tag pushes on this repo only.
+            # Format: repo:<owner>/<repo>:ref:refs/tags/*
+            "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:ref:refs/tags/*"
+          }
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Name = "${var.project_name}-github-actions-deploy-role"
+  }
+}
+
+resource "aws_iam_role_policy" "github_actions_deploy_policy" {
+  name = "${var.project_name}-github-actions-deploy-policy"
+  role = aws_iam_role.github_actions_deploy.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "ECRAuth"
+        Effect = "Allow"
+        Action = "ecr:GetAuthorizationToken"
+        Resource = "*"
+      },
+      {
+        Sid    = "ECRPush"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:CompleteLayerUpload",
+          "ecr:InitiateLayerUpload",
+          "ecr:PutImage",
+          "ecr:UploadLayerPart",
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer"
+        ]
+        # Scoped to this project's ECR repos only
+        Resource = "arn:aws:ecr:${var.aws_region}:*:repository/crystal-clear-*"
+      },
+      {
+        Sid    = "SSMDeploy"
+        Effect = "Allow"
+        Action = [
+          "ssm:SendCommand",
+          "ssm:GetCommandInvocation",
+          "ssm:ListCommandInvocations"
+        ]
+        Resource = [
+          "arn:aws:ssm:${var.aws_region}:*:document/AWS-RunShellScript",
+          "arn:aws:ec2:${var.aws_region}:*:instance/*"
+        ]
+        Condition = {
+          StringLike = {
+            "ssm:resourceTag/Name" = "crystal-clear-voices*"
+          }
+        }
+      },
+      {
+        Sid    = "TerraformState"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"
+        ]
+        Resource = [
+          "arn:aws:s3:::crystal-clear-voices-tf-state",
+          "arn:aws:s3:::crystal-clear-voices-tf-state/*"
+        ]
+      },
+      {
+        Sid    = "TerraformLock"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem", "dynamodb:PutItem",
+          "dynamodb:DeleteItem", "dynamodb:DescribeTable"
+        ]
+        Resource = "arn:aws:dynamodb:${var.aws_region}:*:table/terraform-locks"
+      }
+    ]
+  })
+}
+
+output "github_actions_deploy_role_arn" {
+  description = "Add this as AWS_DEPLOY_ROLE_ARN in GitHub repository secrets."
+  value       = aws_iam_role.github_actions_deploy.arn
+}

@@ -75,3 +75,9 @@ variable "cors_allow_origins" {
   type        = list(string)
   default     = ["https://voice.thediscobass.com", "https://thesteelezone.com"]
 }
+
+variable "github_repo" {
+  description = "GitHub repository in owner/repo format — used to scope the OIDC trust policy."
+  type        = string
+  default     = "crystalclearhouse-data/crystal-clear-voices"
+}
