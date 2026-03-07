@@ -126,72 +126,76 @@
     "path": "workflows/Infrastructure/my-workflow-3"
   },
   {
-    "id": "unprocessed-01",
-    "name": "Unprocessed 01",
+    "id": "client-intake-onboarding",
+    "name": "Client Intake Onboarding",
     "category": "Other",
     "status": "Unprocessed",
-    "path": "workflows/Other/unprocessed-01"
+    "path": "workflows/Other/unprocessed-01",
+    "n8n_source": "n8n-workflows/client-intake-onboarding.json"
   },
   {
-    "id": "unprocessed-02",
-    "name": "Unprocessed 02",
+    "id": "creator-content-pipeline",
+    "name": "Creator Content Pipeline",
     "category": "Other",
     "status": "Unprocessed",
-    "path": "workflows/Other/unprocessed-02"
+    "path": "workflows/Other/unprocessed-02",
+    "n8n_source": "n8n-workflows/creator-content-pipeline-blueprint.json"
   },
   {
-    "id": "unprocessed-03",
-    "name": "Unprocessed 03",
+    "id": "notion-client-blueprint-draft",
+    "name": "Notion Client Blueprint Draft",
     "category": "Other",
     "status": "Unprocessed",
-    "path": "workflows/Other/unprocessed-03"
+    "path": "workflows/Other/unprocessed-03",
+    "n8n_source": "n8n-workflows/notion-client-blueprint-draft.json"
   },
   {
-    "id": "unprocessed-04",
-    "name": "Unprocessed 04",
+    "id": "sophie-order-confirmation-sms",
+    "name": "Sophie Order Confirmation SMS",
     "category": "Other",
     "status": "Unprocessed",
     "path": "workflows/Other/unprocessed-04"
   },
   {
-    "id": "unprocessed-05",
-    "name": "Unprocessed 05",
-    "category": "Other",
+    "id": "webhook-dead-letter-handler",
+    "name": "Webhook Dead Letter Handler",
+    "category": "Infrastructure",
     "status": "Unprocessed",
     "path": "workflows/Other/unprocessed-05"
   },
   {
-    "id": "unprocessed-06",
-    "name": "Unprocessed 06",
-    "category": "Other",
+    "id": "tiktok-analytics-ingestion",
+    "name": "TikTok Analytics Ingestion",
+    "category": "Infrastructure",
     "status": "Unprocessed",
     "path": "workflows/Other/unprocessed-06"
   },
   {
-    "id": "unprocessed-07",
-    "name": "Unprocessed 07",
+    "id": "email-drip-campaign",
+    "name": "Email Drip Campaign",
     "category": "Other",
     "status": "Unprocessed",
     "path": "workflows/Other/unprocessed-07"
   },
   {
-    "id": "unprocessed-08",
-    "name": "Unprocessed 08",
-    "category": "Other",
+    "id": "concierge-agent-v2",
+    "name": "Concierge Agent v2",
+    "category": "Agent Experiments",
     "status": "Unprocessed",
-    "path": "workflows/Other/unprocessed-08"
+    "path": "workflows/Other/unprocessed-08",
+    "n8n_source": "n8n-workflows/concierge-agent.json"
   },
   {
-    "id": "unprocessed-09",
-    "name": "Unprocessed 09",
-    "category": "Other",
+    "id": "social-media-scheduler",
+    "name": "Social Media Scheduler",
+    "category": "Content Creation",
     "status": "Unprocessed",
     "path": "workflows/Other/unprocessed-09"
   },
   {
-    "id": "unprocessed-10",
-    "name": "Unprocessed 10",
-    "category": "Other",
+    "id": "discord-alert-router",
+    "name": "Discord Alert Router",
+    "category": "Infrastructure",
     "status": "Unprocessed",
     "path": "workflows/Other/unprocessed-10"
   }

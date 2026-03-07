@@ -125,6 +125,27 @@ app.use((req, res, next) => {
 });
 
 // ============================================================================
+// API KEY AUTH — applied to all /api/* routes
+// Set API_KEY env var (generate: openssl rand -hex 32).
+// When unset, auth is skipped with a startup warning — local dev only.
+// ============================================================================
+
+const API_KEY = process.env.API_KEY;
+
+if (!API_KEY) {
+  logger.warn('API_KEY not set — /api/* routes are unauthenticated. Set API_KEY in .env for production.');
+}
+
+app.use('/api', (req, res, next) => {
+  if (!API_KEY) return next();
+  const provided = req.headers['x-api-key'];
+  if (!provided || provided !== API_KEY) {
+    return res.status(401).json({ error: 'Unauthorized — missing or invalid X-API-Key header' });
+  }
+  next();
+});
+
+// ============================================================================
 // VALIDATION SCHEMAS
 // ============================================================================
 

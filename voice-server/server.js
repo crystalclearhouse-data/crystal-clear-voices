@@ -2,8 +2,51 @@ import express from 'express';
 import Anthropic from '@anthropic-ai/sdk';
 import fetch from 'node-fetch';
 import dotenv from 'dotenv';
+import pg from 'pg';
 
 dotenv.config();
+
+// ── Postgres connection (optional — degrades gracefully when DB_URL is unset) ─
+const { Pool } = pg;
+const pool = process.env.DATABASE_URL
+  ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false })
+  : null;
+
+if (!pool) {
+  console.warn('[db] DATABASE_URL not set — call history will be in-memory only (lost on restart).');
+}
+
+async function dbQuery(sql, params = []) {
+  if (!pool) return null;
+  try {
+    return await pool.query(sql, params);
+  } catch (err) {
+    console.error('[db]', err.message);
+    return null;
+  }
+}
+
+async function loadCallHistory(callSid) {
+  const res = await dbQuery(
+    'SELECT messages FROM call_history WHERE call_sid = $1',
+    [callSid]
+  );
+  return res?.rows?.[0]?.messages ?? null;
+}
+
+async function saveCallHistory(callSid, messages) {
+  await dbQuery(
+    `INSERT INTO call_history (call_sid, messages, updated_at)
+     VALUES ($1, $2::jsonb, NOW())
+     ON CONFLICT (call_sid) DO UPDATE
+       SET messages = EXCLUDED.messages, updated_at = NOW()`,
+    [callSid, JSON.stringify(messages)]
+  );
+}
+
+async function deleteCallHistory(callSid) {
+  await dbQuery('DELETE FROM call_history WHERE call_sid = $1', [callSid]);
+}
 
 const app = express();
 app.use(express.json());
@@ -266,8 +309,8 @@ app.post('/twilio/voice', (req, res) => {
   res.type('text/xml').send(twiml);
 });
 
-// Per-call conversation history — keyed by CallSid, auto-expires after 30 min
-const callHistory = new Map();
+// Per-call conversation history — DB-primary, in-memory fallback for cold starts
+const callHistory = new Map(); // fallback cache; source of truth is DB when available
 
 // Build a <Play>+<Gather> TwiML block
 function gatherTwiml(audioUrl) {
@@ -332,9 +375,10 @@ app.post('/twilio/gather', async (req, res) => {
     return res.type('text/xml').send(twiml);
   }
 
-  // ── Initialise per-call conversation history ────────────────────────────
+  // ── Initialise per-call conversation history (DB-first, memory fallback) ─
   if (!callHistory.has(callSid)) {
-    callHistory.set(callSid, []);
+    const persisted = await loadCallHistory(callSid);
+    callHistory.set(callSid, persisted ?? []);
     setTimeout(() => callHistory.delete(callSid), 30 * 60 * 1000); // 30 min TTL
   }
   const history = callHistory.get(callSid);
@@ -409,6 +453,9 @@ app.post('/twilio/gather', async (req, res) => {
       history.push({ role: 'assistant', content: sophieText });
     }
 
+    // Persist after every turn so restarts don't lose context
+    await saveCallHistory(callSid, history);
+
     console.log(`[twilio] Sophie: ${sophieText}`);
 
     // 4. ElevenLabs TTS → cached MP3 → TwiML <Play>
@@ -437,10 +484,11 @@ app.get('/twilio/audio/:id', (req, res) => {
 });
 
 // Status callback — Twilio posts here when a call ends; clean up history
-app.post('/twilio/status', (req, res) => {
+app.post('/twilio/status', async (req, res) => {
   const { CallSid, CallStatus } = req.body;
   if (['completed', 'busy', 'failed', 'no-answer', 'canceled'].includes(CallStatus)) {
     callHistory.delete(CallSid);
+    await deleteCallHistory(CallSid);
     console.log(`[twilio] Call ${CallSid?.slice(-6)} ended (${CallStatus}) — history cleared`);
   }
   res.sendStatus(204);

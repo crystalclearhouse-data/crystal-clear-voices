@@ -21,6 +21,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { withAudit } from "../mcp-audit.js";
+import { injectHashtags } from "./hashtag-strategy.js";
 
 const SERVER_NAME = "social-media";
 
@@ -132,27 +133,34 @@ function auditedTool(name, desc, schema, handler) {
 // ── Tool: social_post_all ──────────────────────────────────────────────────
 auditedTool(
   "social_post_all",
-  "Cross-post content to all social platforms (Facebook, Instagram, TikTok) via n8n. Requires n8n to be running (scripts/dev-up.sh).",
+  "Cross-post content to all social platforms (Facebook, Instagram, TikTok) via n8n. Hashtags are appended automatically per platform. Requires n8n to be running (scripts/dev-up.sh).",
   {
     message: z.string().describe("Content to post across all platforms"),
     media_url: z.string().optional().describe("Optional public URL to an image or video"),
+    category: z
+      .enum(["music", "ai", "content", "events", "lifestyle", "booking", "none"])
+      .default("music")
+      .describe("Content category used to select relevant hashtags"),
   },
-  async ({ message, media_url }) => {
+  async ({ message, media_url, category }) => {
     const safeMessage = sanitizeMessage(message);
     const safePlatforms = ["facebook", "instagram", "tiktok"].filter((p) => {
       try { ensurePlatformAllowed(p); return true; } catch { return false; }
     });
     if (safePlatforms.length === 0) throw new Error("No allowed platforms configured");
     const safeMediaUrl = media_url ? sanitizeHttpsLink(media_url) : null;
-    const payload = {
-      content: safeMessage,
+
+    // Build per-platform payloads so each gets correctly capped hashtags.
+    const payloads = safePlatforms.map((platform) => ({
+      platform,
+      content: injectHashtags(safeMessage, platform, category),
       media_url: safeMediaUrl,
-      platforms: safePlatforms,
-    };
+    }));
+
     const res = await fetch(`${N8N_WEBHOOK_URL}/webhook/social-media/post`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ payloads }),
     });
     const text = await res.text();
     return ok(`n8n cross-post response (HTTP ${res.status}):\n${text}`);
@@ -162,17 +170,22 @@ auditedTool(
 // ── Tools: Facebook ────────────────────────────────────────────────────────
 auditedTool(
   "facebook_post",
-  "Post a message (and optional https:// link) to The Steele Zone Facebook Page.",
+  "Post a message (and optional https:// link) to The Steele Zone Facebook Page. Hashtags are appended automatically (Facebook cap: 3).",
   {
     message: z.string().describe("Text content to post"),
     link: z.string().optional().describe("Optional https:// URL to include in the post"),
+    category: z
+      .enum(["music", "ai", "content", "events", "lifestyle", "booking", "none"])
+      .default("music")
+      .describe("Content category used to select relevant hashtags"),
   },
-  async ({ message, link }) => {
+  async ({ message, link, category }) => {
     ensurePlatformAllowed("facebook");
     requireEnv("META_PAGE_ID", "META_PAGE_ACCESS_TOKEN");
     const safeMessage = sanitizeMessage(message);
     const safeLink = sanitizeHttpsLink(link);
-    const params = { message: safeMessage, access_token: META_PAGE_ACCESS_TOKEN };
+    const taggedMessage = injectHashtags(safeMessage, "facebook", category);
+    const params = { message: taggedMessage, access_token: META_PAGE_ACCESS_TOKEN };
     if (safeLink) params.link = safeLink;
     const data = await graphPost(`${META_PAGE_ID}/feed`, params);
     return ok(`Posted to Facebook! Post ID: ${data.id}`);
@@ -224,7 +237,7 @@ auditedTool(
 // ── Tools: Instagram ───────────────────────────────────────────────────────
 auditedTool(
   "instagram_post",
-  "Post an image or video to @the-steele-zone Instagram. Media must be at a public HTTPS URL.",
+  "Post an image or video to @the-steele-zone Instagram. Hashtags are appended automatically (Instagram cap: 30). Media must be at a public HTTPS URL.",
   {
     media_url: z.string().describe("Public HTTPS URL of the image or video"),
     caption: z.string().optional().describe("Caption for the post"),
@@ -232,17 +245,22 @@ auditedTool(
       .enum(["IMAGE", "VIDEO", "REELS"])
       .default("IMAGE")
       .describe("Type of media to post"),
+    category: z
+      .enum(["music", "ai", "content", "events", "lifestyle", "booking", "none"])
+      .default("music")
+      .describe("Content category used to select relevant hashtags"),
   },
-  async ({ media_url, caption, media_type }) => {
+  async ({ media_url, caption, media_type, category }) => {
     ensurePlatformAllowed("instagram");
     requireEnv("META_IG_USER_ID", "META_PAGE_ACCESS_TOKEN");
     const safeMediaUrl = sanitizeHttpsLink(media_url);
-    const safeCaption = caption ? sanitizeMessage(caption) : undefined;
+    const baseCaption = caption ? sanitizeMessage(caption) : "";
+    const taggedCaption = injectHashtags(baseCaption, "instagram", category);
     const containerParams = {
       access_token: META_PAGE_ACCESS_TOKEN,
       media_type,
       ...(media_type === "IMAGE" ? { image_url: safeMediaUrl } : { video_url: safeMediaUrl }),
-      ...(safeCaption ? { caption: safeCaption } : {}),
+      ...(taggedCaption ? { caption: taggedCaption } : {}),
     };
     const container = await graphPost(`${META_IG_USER_ID}/media`, containerParams);
     const published = await graphPost(`${META_IG_USER_ID}/media_publish`, {
@@ -321,25 +339,31 @@ auditedTool(
 
 auditedTool(
   "tiktok_post_video",
-  "Post a video to @the-steele-zone TikTok via the Content Posting API. Video must be at a public HTTPS URL.",
+  "Post a video to @the-steele-zone TikTok via the Content Posting API. Hashtags are appended to the title automatically (TikTok cap: 5). Video must be at a public HTTPS URL.",
   {
     video_url: z.string().describe("Public HTTPS URL of the video file"),
-    title: z.string().max(150).describe("Title/caption for the video (max 150 characters)"),
+    title: z.string().max(100).describe("Title/caption for the video (max 100 chars before hashtags)"),
     privacy_level: z
       .enum(["PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "SELF_ONLY"])
       .default("PUBLIC_TO_EVERYONE")
       .describe("Who can see the video"),
+    category: z
+      .enum(["music", "ai", "content", "events", "lifestyle", "booking", "none"])
+      .default("music")
+      .describe("Content category used to select relevant hashtags"),
     disable_comment: z.boolean().default(false).describe("Disable comments on this video"),
     disable_duet: z.boolean().default(false).describe("Disable duets for this video"),
     disable_stitch: z.boolean().default(false).describe("Disable stitches for this video"),
   },
-  async ({ video_url, title, privacy_level, disable_comment, disable_duet, disable_stitch }) => {
+  async ({ video_url, title, privacy_level, category, disable_comment, disable_duet, disable_stitch }) => {
     ensurePlatformAllowed("tiktok");
     requireEnv("TIKTOK_ACCESS_TOKEN");
     const safeVideoUrl = sanitizeHttpsLink(video_url);
     const safeTitle = sanitizeMessage(title);
+    // TikTok titles are short — inline hashtags rather than newline-separated
+    const taggedTitle = injectHashtags(safeTitle, "tiktok", category).replace('\n\n', ' ');
     const data = await tiktokRequest("post/publish/video/init/", {
-      post_info: { title: safeTitle, privacy_level, disable_comment, disable_duet, disable_stitch },
+      post_info: { title: taggedTitle.slice(0, 150), privacy_level, disable_comment, disable_duet, disable_stitch },
       source_info: { source: "PULL_FROM_URL", video_url: safeVideoUrl },
     });
     return ok(

@@ -69,3 +69,9 @@ variable "tags" {
     ManagedBy   = "terraform"
   }
 }
+
+variable "cors_allow_origins" {
+  description = "Allowed CORS origins for the API Gateway. Never use [\"*\"] in production."
+  type        = list(string)
+  default     = ["https://voice.thediscobass.com", "https://thesteelezone.com"]
+}

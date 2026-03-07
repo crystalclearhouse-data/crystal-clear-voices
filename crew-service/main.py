@@ -3,21 +3,25 @@ Sophie DevOps Crew — FastAPI service
 Runs at http://localhost:8000  (CREW_SERVICE_URL)
 
 Endpoints:
-  GET  /          health check
-  POST /run       run full crew (smoke test + webhook audit + env audit)
-  POST /smoke     run smoke-test task only
-  POST /audit     run webhook + env audit tasks only
+  GET  /                   health check
+  POST /run                run full crew (smoke test + webhook audit + env audit)
+  POST /smoke              run smoke-test task only
+  POST /audit              run webhook + env audit tasks only
+  POST /crew/record_order  record a confirmed restaurant order, return confirmation
 """
 
 import json
 import os
+import random
+import string
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from crewai import Agent, Task, Crew, Process
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -44,6 +48,56 @@ class RunResponse(BaseModel):
     status: str
     tasks_run: list[str]
     result: str
+
+
+# ---------------------------------------------------------------------------
+# Restaurant order models
+# ---------------------------------------------------------------------------
+
+class OrderItem(BaseModel):
+    name: str
+    quantity: int = Field(ge=1)
+    notes: Optional[str] = None
+
+
+class OrderRequest(BaseModel):
+    customer_phone: str
+    raw_transcript: str
+    items: List[OrderItem]
+    pickup_time: Optional[str] = None
+    estimated_intent: str = "place_order"
+    call_id: Optional[str] = None
+
+
+class OrderResponse(BaseModel):
+    status: str
+    confirmation_number: str
+    order_summary: str
+    pickup_time: Optional[str]
+    recorded_at: str
+
+
+# ---------------------------------------------------------------------------
+# Order helpers
+# ---------------------------------------------------------------------------
+
+# In-memory log; swap for DB write (e.g. Supabase) when ready.
+_order_log: List[Dict[str, Any]] = []
+
+
+def _gen_confirmation() -> str:
+    suffix = "".join(random.choices(string.digits, k=4))
+    return f"CCH-{suffix}"
+
+
+def _format_summary(items: List[OrderItem]) -> str:
+    parts = []
+    for item in items:
+        line = f"{item.quantity}x {item.name}"
+        if item.notes:
+            line += f" ({item.notes})"
+        parts.append(line)
+    return ", ".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +199,40 @@ def run_audit(req: RunRequest):
         return RunResponse(status="completed", **out)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/crew/record_order", response_model=OrderResponse)
+def record_order(req: OrderRequest):
+    """
+    Record a confirmed restaurant order and return a confirmation number.
+    Called by Sophie (voice-server) only after the caller has verbally confirmed
+    the complete order. Never call speculatively.
+    """
+    if req.estimated_intent not in ("place_order", "modify_order", "cancel_order"):
+        raise HTTPException(status_code=422, detail="Invalid estimated_intent value")
+
+    confirmation = _gen_confirmation()
+    summary = _format_summary(req.items)
+    recorded_at = datetime.now(timezone.utc).isoformat()
+
+    _order_log.append({
+        "confirmation_number": confirmation,
+        "customer_phone": req.customer_phone,
+        "call_id": req.call_id,
+        "items": [i.model_dump() for i in req.items],
+        "pickup_time": req.pickup_time,
+        "estimated_intent": req.estimated_intent,
+        "order_summary": summary,
+        "recorded_at": recorded_at,
+    })
+
+    return OrderResponse(
+        status="confirmed",
+        confirmation_number=confirmation,
+        order_summary=summary,
+        pickup_time=req.pickup_time,
+        recorded_at=recorded_at,
+    )
 
 
 # ---------------------------------------------------------------------------

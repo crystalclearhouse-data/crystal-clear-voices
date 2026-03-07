@@ -1,19 +1,35 @@
 terraform {
-  required_version = ">= 1.0"
+  required_version = ">= 1.5"
   required_providers {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
-  # Uncomment and configure for remote state
-  # backend "s3" {
-  #   bucket         = "crystal-clear-voices-terraform-state"
-  #   key            = "prod/terraform.tfstate"
-  #   region         = "us-east-1"
-  #   encrypt        = true
-  #   dynamodb_table = "terraform-locks"
-  # }
+
+  # Remote state with locking.
+  # One-time bootstrap (run manually before terraform init):
+  #   aws s3api create-bucket --bucket crystal-clear-voices-tf-state --region us-east-1
+  #   aws s3api put-bucket-versioning --bucket crystal-clear-voices-tf-state \
+  #     --versioning-configuration Status=Enabled
+  #   aws s3api put-bucket-encryption --bucket crystal-clear-voices-tf-state \
+  #     --server-side-encryption-configuration \
+  #     '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+  #   aws dynamodb create-table --table-name terraform-locks \
+  #     --attribute-definitions AttributeName=LockID,AttributeType=S \
+  #     --key-schema AttributeName=LockID,KeyType=HASH \
+  #     --billing-mode PAY_PER_REQUEST --region us-east-1
+  backend "s3" {
+    bucket         = "crystal-clear-voices-tf-state"
+    key            = "prod/terraform.tfstate"
+    region         = "us-east-1"
+    encrypt        = true
+    dynamodb_table = "terraform-locks"
+  }
 }
 
 provider "aws" {
@@ -34,6 +50,7 @@ resource "aws_security_group" "agents" {
   vpc_id      = var.vpc_id
 
   ingress {
+    description = "HTTPS public"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
@@ -41,18 +58,15 @@ resource "aws_security_group" "agents" {
   }
 
   ingress {
+    description = "HTTP — redirect to HTTPS only"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  ingress {
-    from_port   = 3000
-    to_port     = 3000
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+  # Port 3000 removed — api-server is reached only via API Gateway / ALB,
+  # never directly from the internet.
 
   egress {
     from_port   = 0
@@ -123,13 +137,17 @@ resource "aws_iam_role_policy" "agent_policy" {
     Version = "2012-10-17"
     Statement = [
       {
+        # Least-privilege: only secrets and SSM params namespaced to this project
         Effect = "Allow"
         Action = [
           "secretsmanager:GetSecretValue",
           "ssm:GetParameter",
           "ssm:GetParameters"
         ]
-        Resource = "*"
+        Resource = [
+          "arn:aws:secretsmanager:${var.aws_region}:*:secret:${var.project_name}/*",
+          "arn:aws:ssm:${var.aws_region}:*:parameter/${var.project_name}/*"
+        ]
       },
       {
         Effect = "Allow"
@@ -138,14 +156,20 @@ resource "aws_iam_role_policy" "agent_policy" {
           "logs:CreateLogStream",
           "logs:PutLogEvents"
         ]
-        Resource = "arn:aws:logs:*:*:*"
+        Resource = "arn:aws:logs:${var.aws_region}:*:log-group:/aws/ec2/${var.project_name}*"
       },
       {
         Effect = "Allow"
         Action = [
           "cloudwatch:PutMetricData"
         ]
+        # PutMetricData does not support resource-level restrictions
         Resource = "*"
+        Condition = {
+          StringEquals = {
+            "cloudwatch:namespace" = var.project_name
+          }
+        }
       }
     ]
   })
@@ -282,9 +306,12 @@ resource "aws_apigatewayv2_api" "agents_api" {
   protocol_type = "HTTP"
 
   cors_configuration {
-    allow_origins = ["*"]
-    allow_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
-    allow_headers = ["*"]
+    # Restrict to owned domains; never use * in production
+    allow_origins  = var.cors_allow_origins
+    allow_methods  = ["GET", "POST", "PATCH", "OPTIONS"]
+    allow_headers  = ["Content-Type", "X-API-Key", "Authorization"]
+    expose_headers = ["X-Sophie-Text"]
+    max_age        = 300
   }
 
   tags = {
