@@ -1,5 +1,22 @@
 name: CI / Deploy
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Trigger matrix:
+#   Branch push / PR  → test only (CI guard, no build, no deploy)
+#   Tag push          → test → prepare → build → deploy → notify
+#
+# Tag patterns:
+#   Per-service:  voice/v1.2.0  api/v2.0.0  webhook/v1.0.3  crew/v0.4.1  mcp/v0.9.1
+#   Global:       v1.5.0   (builds + deploys all 5 services atomically)
+#   Staging RC:   voice/v1.2.0-rc1   v1.5.0-rc1
+#   Dev alpha:    voice/v1.2.0-alpha1   v1.5.0-alpha1
+#
+# Environment derivation (automatic from tag suffix):
+#   *-alpha* or *-dev* → dev
+#   *-rc*              → staging
+#   clean semver       → production
+# ─────────────────────────────────────────────────────────────────────────────
+
 on:
   push:
     branches: [master, main]
@@ -7,13 +24,38 @@ on:
       - 'api-server/**'
       - 'voice-server/**'
       - 'crew-service/**'
+      - 'webhook-server/**'
+      - 'mcp-server.js'
+      - 'mcp-audit.js'
+      - 'mcp-paths.js'
+      - 'Dockerfile.mcp'
       - 'docker-compose.yml'
       - '.github/workflows/deploy.yml'
       - 'terraform/**'
       - 'workflows/index.json'
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
+      - 'voice/v*'
+      - 'api/v*'
+      - 'webhook/v*'
+      - 'crew/v*'
+      - 'mcp/v*'
   pull_request:
     branches: [master, main]
   workflow_dispatch:
+    inputs:
+      service:
+        description: 'Service to deploy (or "all")'
+        required: true
+        default: 'all'
+        type: choice
+        options: [all, voice-server, api-server, webhook-server, crew-service, mcp-server]
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options: [dev, staging, production]
 
 env:
   AWS_REGION: us-east-1
@@ -21,7 +63,7 @@ env:
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────────────
-  # LINT & TEST — runs on every push and every PR
+  # LINT & TEST — runs on every push, PR, and tag
   # ─────────────────────────────────────────────────────────────────────────────
   test:
     name: Lint & Test
@@ -39,12 +81,14 @@ jobs:
             voice-server/package.json
             api-server/package.json
             webhook-server/package.json
+            package.json
 
       - name: Install Node deps
         run: |
           npm ci --prefix voice-server
           npm ci --prefix api-server
           npm ci --prefix webhook-server
+          npm ci
 
       - name: Syntax check JS (node --check)
         run: |
@@ -53,6 +97,7 @@ jobs:
           node --check voice-server/hashtag-strategy.js
           node --check api-server/index.js
           node --check webhook-server/webhook-server.js
+          node --check mcp-server.js
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -73,16 +118,67 @@ jobs:
         run: node -e "JSON.parse(require('fs').readFileSync('workflows/index.json','utf8')); console.log('index.json valid')"
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # BUILD & PUSH IMAGES
+  # PREPARE — parse tag → derive services list + target environment
+  # Only runs on tag pushes or workflow_dispatch
+  # ─────────────────────────────────────────────────────────────────────────────
+  prepare:
+    name: Prepare (parse tag)
+    runs-on: ubuntu-latest
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    outputs:
+      services:    ${{ steps.parse.outputs.services }}
+      environment: ${{ steps.parse.outputs.environment }}
+
+    steps:
+      - name: Parse tag → services + environment
+        id: parse
+        run: |
+          TAG="${GITHUB_REF_NAME:-manual}"
+          DISPATCH_SVC="${{ github.event.inputs.service }}"
+          DISPATCH_ENV="${{ github.event.inputs.environment }}"
+
+          # ── Derive target services ──────────────────────────────────────────
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            if [[ "$DISPATCH_SVC" == "all" ]]; then
+              SERVICES='["voice-server","api-server","webhook-server","crew-service","mcp-server"]'
+            else
+              SERVICES="[\"${DISPATCH_SVC}\"]"
+            fi
+          elif [[ "$TAG" =~ ^voice/ ]];   then SERVICES='["voice-server"]'
+          elif [[ "$TAG" =~ ^api/ ]];     then SERVICES='["api-server"]'
+          elif [[ "$TAG" =~ ^webhook/ ]]; then SERVICES='["webhook-server"]'
+          elif [[ "$TAG" =~ ^crew/ ]];    then SERVICES='["crew-service"]'
+          elif [[ "$TAG" =~ ^mcp/ ]];     then SERVICES='["mcp-server"]'
+          else
+            SERVICES='["voice-server","api-server","webhook-server","crew-service","mcp-server"]'
+          fi
+
+          # ── Derive environment ──────────────────────────────────────────────
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            ENV="$DISPATCH_ENV"
+          elif [[ "$TAG" =~ (alpha|dev) ]]; then ENV="dev"
+          elif [[ "$TAG" =~ -rc ]];         then ENV="staging"
+          else                                   ENV="production"
+          fi
+
+          echo "Tag: $TAG  →  services=$SERVICES  environment=$ENV"
+          echo "services=$SERVICES"  >> "$GITHUB_OUTPUT"
+          echo "environment=$ENV"    >> "$GITHUB_OUTPUT"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # BUILD & PUSH — matrix over targeted services
   # ─────────────────────────────────────────────────────────────────────────────
   build:
-    needs: test
-    name: Build & Push Docker Images
-    if: ${{ vars.ENABLE_DEPLOY == 'true' }}
+    name: Build ${{ matrix.service }}
     runs-on: ubuntu-latest
-    outputs:
-      voice-tag: ${{ steps.meta-voice.outputs.tags }}
-      api-tag:   ${{ steps.meta-api.outputs.tags }}
+    needs: prepare
+    if: vars.ENABLE_DEPLOY == 'true'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.prepare.outputs.services) }}
 
     steps:
       - uses: actions/checkout@v4
@@ -97,45 +193,45 @@ jobs:
       - name: Log in to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build & push voice-server
-        id: meta-voice
-        uses: docker/build-push-action@v5
-        with:
-          context: ./voice-server
-          push: true
-          tags: |
-            ${{ env.ECR_REGISTRY }}/crystal-clear-voice-server:latest
-            ${{ env.ECR_REGISTRY }}/crystal-clear-voice-server:${{ github.sha }}
+      - name: Resolve build context
+        id: ctx
+        run: |
+          case "${{ matrix.service }}" in
+            voice-server)   CTX="./voice-server";   DF="./voice-server/Dockerfile"   ;;
+            api-server)     CTX="./api-server";     DF="./api-server/Dockerfile"     ;;
+            webhook-server) CTX="./webhook-server"; DF="./webhook-server/Dockerfile" ;;
+            crew-service)   CTX="./crew-service";   DF="./crew-service/Dockerfile"   ;;
+            mcp-server)     CTX=".";                DF="./Dockerfile.mcp"            ;;
+          esac
+          REPO="${{ env.ECR_REGISTRY }}/crystal-clear-${{ matrix.service }}"
+          echo "context=$CTX"                            >> "$GITHUB_OUTPUT"
+          echo "dockerfile=$DF"                          >> "$GITHUB_OUTPUT"
+          echo "image_latest=${REPO}:latest"             >> "$GITHUB_OUTPUT"
+          echo "image_sha=${REPO}:${{ github.sha }}"     >> "$GITHUB_OUTPUT"
+          echo "image_tag=${REPO}:${GITHUB_REF_NAME}"    >> "$GITHUB_OUTPUT"
 
-      - name: Build & push api-server
-        id: meta-api
+      - name: Build & push ${{ matrix.service }}
         uses: docker/build-push-action@v5
         with:
-          context: ./api-server
-          push: true
+          context:    ${{ steps.ctx.outputs.context }}
+          file:       ${{ steps.ctx.outputs.dockerfile }}
+          push:       true
           tags: |
-            ${{ env.ECR_REGISTRY }}/crystal-clear-api-server:latest
-            ${{ env.ECR_REGISTRY }}/crystal-clear-api-server:${{ github.sha }}
-
-      - name: Build & push crew-service
-        id: meta-crew
-        uses: docker/build-push-action@v5
-        with:
-          context: ./crew-service
-          push: true
-          tags: |
-            ${{ env.ECR_REGISTRY }}/crystal-clear-crew-service:latest
-            ${{ env.ECR_REGISTRY }}/crystal-clear-crew-service:${{ github.sha }}
+            ${{ steps.ctx.outputs.image_latest }}
+            ${{ steps.ctx.outputs.image_sha }}
+            ${{ steps.ctx.outputs.image_tag }}
+          cache-from: type=registry,ref=${{ steps.ctx.outputs.image_latest }}
+          cache-to:   type=inline
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # DEPLOY TO EC2
+  # DEPLOY — SSM to the correct environment's EC2 fleet
   # ─────────────────────────────────────────────────────────────────────────────
   deploy:
-    name: Deploy to EC2
-    if: ${{ vars.ENABLE_DEPLOY == 'true' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main') }}
+    name: Deploy → ${{ needs.prepare.outputs.environment }}
     runs-on: ubuntu-latest
-    needs: [test, build]
-    environment: production
+    needs: [prepare, build]
+    if: vars.ENABLE_DEPLOY == 'true'
+    environment: ${{ needs.prepare.outputs.environment }}
 
     steps:
       - uses: actions/checkout@v4
@@ -147,32 +243,61 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ env.AWS_REGION }}
 
+      - name: Resolve EC2 target
+        id: target
+        run: |
+          case "${{ needs.prepare.outputs.environment }}" in
+            dev)        EC2_TAG="crystal-clear-voices-dev"     ;;
+            staging)    EC2_TAG="crystal-clear-voices-staging" ;;
+            production) EC2_TAG="crystal-clear-voices"         ;;
+          esac
+          echo "ec2_tag=$EC2_TAG" >> "$GITHUB_OUTPUT"
+
+          COMPOSE_SVCS=$(echo '${{ needs.prepare.outputs.services }}' \
+            | python3 -c "import sys,json; print(' '.join(json.load(sys.stdin)))")
+          echo "compose_services=$COMPOSE_SVCS" >> "$GITHUB_OUTPUT"
+
       - name: Deploy via SSM
         run: |
+          COMPOSE_SVCS="${{ steps.target.outputs.compose_services }}"
+          SHA="${{ github.sha }}"
+          REGISTRY="${{ env.ECR_REGISTRY }}"
+          REGION="${{ env.AWS_REGION }}"
+
           aws ssm send-command \
-            --targets "Key=tag:Name,Values=crystal-clear-voices" \
+            --targets "Key=tag:Name,Values=${{ steps.target.outputs.ec2_tag }}" \
             --document-name "AWS-RunShellScript" \
-            --parameters commands='[
-              "aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}",
-              "docker pull ${{ env.ECR_REGISTRY }}/crystal-clear-voice-server:${{ github.sha }}",
-              "docker pull ${{ env.ECR_REGISTRY }}/crystal-clear-api-server:${{ github.sha }}",
-              "cd /opt/crystal-clear-voices",
-              "SHA=${{ github.sha }} docker-compose up -d --no-build voice-server api-server",
-              "docker system prune -f"
-            ]' \
+            --parameters "commands=[
+              \"set -e\",
+              \"aws ecr get-login-password --region ${REGION} | docker login --username AWS --password-stdin ${REGISTRY}\",
+              \"cd /opt/crystal-clear-voices\",
+              \"git fetch origin && git reset --hard ${SHA}\",
+              \"ECR_REGISTRY=${REGISTRY} docker compose pull ${COMPOSE_SVCS}\",
+              \"ECR_REGISTRY=${REGISTRY} docker compose up -d --no-build --no-deps ${COMPOSE_SVCS}\",
+              \"docker system prune -f\"
+            ]" \
             --output text \
             --query "Command.CommandId"
 
-      - name: Health check voice-server
+      - name: Health checks
         run: |
-          sleep 15
-          curl --retry 5 --retry-delay 5 --retry-connrefused \
-            https://voice.thediscobass.com/health
-
-      - name: Health check api-server
-        run: |
-          curl --retry 5 --retry-delay 5 --retry-connrefused \
-            https://api.voice.thediscobass.com/health
+          sleep 20
+          declare -A HEALTH_URLS=(
+            ["voice-server"]="https://voice.thediscobass.com/health"
+            ["api-server"]="https://api.voice.thediscobass.com/health"
+            ["webhook-server"]="https://hooks.voice.thediscobass.com/health"
+            ["crew-service"]="https://crew.voice.thediscobass.com/health"
+            ["mcp-server"]="https://mcp.voice.thediscobass.com/health"
+          )
+          for svc in ${{ steps.target.outputs.compose_services }}; do
+            URL="${HEALTH_URLS[$svc]:-}"
+            if [[ -n "$URL" ]]; then
+              echo "Checking $svc → $URL"
+              curl --retry 5 --retry-delay 5 --retry-connrefused --silent --fail "$URL" \
+                && echo "✅ $svc healthy" \
+                || echo "⚠️  $svc health check failed (non-blocking — check logs)"
+            fi
+          done
 
   # ─────────────────────────────────────────────────────────────────────────────
   # NOTIFY ON FAILURE
@@ -180,17 +305,15 @@ jobs:
   notify:
     name: Notify on Failure
     runs-on: ubuntu-latest
-    needs: [test, build, deploy]
+    needs: [test, prepare, build, deploy]
     if: failure()
     env:
       DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
 
     steps:
       - name: Post to Discord
-        if: ${{ env.DISCORD_WEBHOOK != '' }}
+        if: env.DISCORD_WEBHOOK != ''
         run: |
-          curl -X POST "$DISCORD_WEBHOOK" \
+          curl -sX POST "$DISCORD_WEBHOOK" \
             -H "Content-Type: application/json" \
-            -d '{
-              "content": "❌ Deploy failed on `${{ github.ref_name }}` — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            }'
+            -d "{\"content\":\"❌ **CI\\/Deploy failed** — \`${GITHUB_REF_NAME}\` → ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"

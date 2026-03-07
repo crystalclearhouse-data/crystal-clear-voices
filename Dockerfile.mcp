@@ -1,0 +1,14 @@
+FROM node:22-alpine
+
+WORKDIR /app
+
+# Root package.json owns mcp-server.js and its imports
+COPY package*.json ./
+RUN npm ci --omit=dev
+
+# Root-level server and its direct dependencies
+COPY mcp-server.js mcp-audit.js mcp-paths.js ./
+
+EXPOSE 3003
+
+CMD ["node", "mcp-server.js", "--http"]

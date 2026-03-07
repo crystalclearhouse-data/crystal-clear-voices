@@ -2,19 +2,23 @@ services:
 
   voice-server:
     build: ./voice-server
+    image: ${ECR_REGISTRY:-crystal-clear}/voice-server:${VOICE_TAG:-latest}
     ports:
       - "3001:3001"
     env_file: ./voice-server/.env
     environment:
       NODE_ENV: development
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-localdev}@postgres:5432/crystalcleardb
     restart: unless-stopped
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     volumes:
       - voice-audio:/app/audio
 
   api-server:
     build: ./api-server
+    image: ${ECR_REGISTRY:-crystal-clear}/api-server:${API_TAG:-latest}
     ports:
       - "3000:3000"
     env_file: ./api-server/.env
@@ -28,6 +32,43 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  webhook-server:
+    build: ./webhook-server
+    image: ${ECR_REGISTRY:-crystal-clear}/webhook-server:${WEBHOOK_TAG:-latest}
+    ports:
+      - "3002:3002"
+    env_file: ./voice-server/.env
+    environment:
+      NODE_ENV: development
+      N8N_WEBHOOK_URL: http://n8n:5678
+    restart: unless-stopped
+    depends_on:
+      - n8n
+
+  mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    image: ${ECR_REGISTRY:-crystal-clear}/mcp-server:${MCP_TAG:-latest}
+    ports:
+      - "3003:3003"
+    env_file: ./voice-server/.env
+    environment:
+      NODE_ENV: development
+    restart: unless-stopped
+
+  crew-service:
+    build: ./crew-service
+    image: ${ECR_REGISTRY:-crystal-clear}/crew-service:${CREW_TAG:-latest}
+    ports:
+      - "8000:8000"
+    env_file: ./voice-server/.env
+    environment:
+      SOPHIE_URL: http://voice-server:3001
+    restart: unless-stopped
+    depends_on:
+      - voice-server
 
   postgres:
     image: postgres:16-alpine
@@ -67,17 +108,6 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
-
-  crew-service:
-    build: ./crew-service
-    ports:
-      - "8000:8000"
-    env_file: ./voice-server/.env
-    environment:
-      SOPHIE_URL: http://voice-server:3001
-    restart: unless-stopped
-    depends_on:
-      - voice-server
 
 volumes:
   postgres-data:
