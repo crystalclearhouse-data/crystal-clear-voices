@@ -18,11 +18,6 @@ output "social_media_agent_private_ip" {
   value       = aws_instance.social_media_agent.private_ip
 }
 
-output "social_media_agent_public_ip" {
-  description = "Public IP of social media agent"
-  value       = aws_instance.social_media_agent.public_ip
-}
-
 output "concierge_agent_id" {
   description = "EC2 instance ID for concierge agent"
   value       = aws_instance.concierge_agent.id
@@ -31,11 +26,6 @@ output "concierge_agent_id" {
 output "concierge_agent_private_ip" {
   description = "Private IP of concierge agent"
   value       = aws_instance.concierge_agent.private_ip
-}
-
-output "concierge_agent_public_ip" {
-  description = "Public IP of concierge agent"
-  value       = aws_instance.concierge_agent.public_ip
 }
 
 output "api_gateway_endpoint" {
@@ -48,10 +38,9 @@ output "api_gateway_invoke_url" {
   value       = aws_apigatewayv2_stage.prod.invoke_url
 }
 
-output "db_password_secret" {
-  description = "Database master password (store this securely)"
-  value       = random_password.db_password.result
-  sensitive   = true
+output "db_password_secret_arn" {
+  description = "ARN of the Secrets Manager secret holding the database master password"
+  value       = aws_secretsmanager_secret.db_password.arn
 }
 
 output "twilio_voice_webhook_url" {

@@ -8,10 +8,11 @@ project_name = "crystal-clear-voices"
 # Replace with your actual values from AWS
 domain_name = "voice.thediscobass.com"
 vpc_id = "vpc-xxxxx"
+vpc_cidr = "10.0.0.0/16"
 subnet_ids = ["subnet-xxxxx", "subnet-yyyyy"]
 
 instance_type = "t3.medium"
-db_instance_class = "db.t3.micro"
+db_instance_class = "db.t3.medium"
 db_allocated_storage = 20
 db_name = "crystalcleardb"
 
