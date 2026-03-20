@@ -1,0 +1,171 @@
+name: Terraform CI
+
+on:
+  pull_request:
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/terraform-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/terraform-ci.yml'
+  workflow_dispatch:
+
+env:
+  TF_VERSION: "1.7.5"
+  TF_WORKING_DIR: terraform
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # FORMAT CHECK
+  # ─────────────────────────────────────────────────────────────────────────────
+  fmt:
+    name: Format Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # VALIDATE
+  # ─────────────────────────────────────────────────────────────────────────────
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    needs: fmt
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: terraform init (backend=false)
+        run: terraform init -backend=false
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+      - name: terraform validate
+        run: terraform validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+      - name: Validate Cloud Run module
+        run: |
+          cd modules/cloud-run
+          terraform init -backend=false
+          terraform validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # PLAN (on PRs only — requires AWS credentials)
+  # ─────────────────────────────────────────────────────────────────────────────
+  plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    needs: validate
+    if: ${{ github.event_name == 'pull_request' && vars.ENABLE_DEPLOY == 'true' }}
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            us-east-1
+
+      - name: terraform init
+        run: terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+      - name: terraform plan
+        id: plan
+        run: |
+          terraform plan \
+            -var="domain_name=${{ vars.TF_DOMAIN_NAME }}" \
+            -var="vpc_id=${{ secrets.TF_VPC_ID }}" \
+            -var="vpc_cidr=${{ vars.TF_VPC_CIDR }}" \
+            -var="subnet_ids=[\"${{ secrets.TF_SUBNET_IDS }}\"]" \
+            -var="public_url=https://${{ vars.TF_DOMAIN_NAME }}" \
+            -no-color \
+            -out=tfplan 2>&1 | tee /tmp/plan.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+      - name: Post plan to PR
+        uses: actions/github-script@v7
+        if: always()
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('/tmp/plan.txt', 'utf8');
+            const maxLen = 65000;
+            const truncated = plan.length > maxLen
+              ? plan.substring(0, maxLen) + '\n\n... (truncated)'
+              : plan;
+            const exitCode = '${{ steps.plan.outputs.exit_code }}';
+            const status = exitCode === '0' ? '✅ Success' : '❌ Failed';
+
+            const body = [
+              `### Terraform Plan — ${status}`,
+              '',
+              '<details><summary>Show Plan</summary>',
+              '',
+              '```terraform',
+              truncated,
+              '```',
+              '',
+              '</details>',
+              '',
+              `_Triggered by @${{ github.actor }} on \`${{ github.head_ref }}\`_`,
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # NOTIFY ON FAILURE
+  # ─────────────────────────────────────────────────────────────────────────────
+  notify:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: [fmt, validate, plan]
+    if: ${{ failure() }}
+    env:
+      DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
+
+    steps:
+      - name: Post to Discord
+        if: ${{ env.DISCORD_WEBHOOK != '' }}
+        run: |
+          curl -X POST "$DISCORD_WEBHOOK" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "content": "❌ Terraform CI failed on `${{ github.ref_name }}` — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }'
