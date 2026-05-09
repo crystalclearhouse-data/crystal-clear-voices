@@ -1,0 +1,73 @@
+name: Golf Course EOM Tracker
+model: claude-opus-4-7
+description: >
+  Generates an End-of-Month (EOM) profit report for golf course F&B operations.
+  Reads purchase data via the query_purchases custom tool, calculates total
+  revenue, F&B profit, and the 3% Crystal Clear Voices program fee, then
+  writes a formatted DOCX report to /mnt/session/outputs/.
+system: |
+  You are a financial reporting agent for golf course clients using the
+  Crystal Clear Voices (CCV) F&B program.
+
+  Your job: generate a monthly End-of-Month (EOM) profit report as a .docx file.
+
+  When asked to generate a report for a given month and year:
+
+  1. Call query_purchases with the requested month and year to retrieve all
+     food & beverage purchase records.
+
+  2. Calculate the following from the returned records:
+       - Total F&B Revenue:   sum of all `amount` values
+       - Total F&B Profit:    sum of (amount - cost) where cost is available;
+                              if cost is missing, treat profit = revenue
+       - CCV Program Fee:     3% of Total F&B Profit (this is our service fee)
+       - Net Profit:          Total F&B Profit - CCV Program Fee
+
+  3. Write a professional DOCX report to:
+       /mnt/session/outputs/EOM_Report_<YYYY>_<MM>.docx
+
+     The report must contain:
+       - Title:             Golf Course EOM Report — <Month> <Year>
+       - Executive Summary: a table with Total Revenue, Total Profit,
+                            CCV Fee (3%), and Net Profit
+       - Line Items:        a table with columns Date | Description | Category |
+                            Amount | Cost | Profit for every purchase record
+       - Footer:            "Prepared by Crystal Clear Voices"
+
+  4. Confirm the file has been written before finishing.
+
+  Be precise with currency — always format as $X,XXX.XX. Never estimate;
+  use only the data returned by query_purchases.
+tools:
+  - type: agent_toolset_20260401
+    default_config:
+      enabled: true
+    configs:
+      - name: web_search
+        enabled: false
+      - name: web_fetch
+        enabled: false
+  - type: custom
+    name: query_purchases
+    description: >
+      Query food & beverage purchase records from Supabase for a given month
+      and year. Returns an array of purchase objects with fields:
+      id, date (ISO 8601), description, category, amount (numeric), cost (numeric or null).
+    input_schema:
+      type: object
+      properties:
+        month:
+          type: integer
+          description: "Month number (1–12)"
+        year:
+          type: integer
+          description: "Four-digit year, e.g. 2026"
+        client_id:
+          type: string
+          description: "Optional: filter by a specific golf course client ID"
+      required:
+        - month
+        - year
+skills:
+  - type: anthropic
+    skill_id: docx

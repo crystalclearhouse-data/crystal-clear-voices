@@ -1,0 +1,6 @@
+name: golf-course-eom-env
+description: "Sandbox for Golf Course EOM Tracker — docx generation + file output"
+config:
+  type: cloud
+  networking:
+    type: unrestricted
