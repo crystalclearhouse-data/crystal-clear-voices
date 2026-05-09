@@ -183,21 +183,21 @@ resource "aws_db_subnet_group" "main" {
 }
 
 resource "aws_rds_cluster" "main" {
-  cluster_identifier        = "${var.project_name}-cluster"
-  engine                    = "aurora-postgresql"
-  engine_version            = "15.3"
-  database_name             = var.db_name
-  master_username           = "postgres"
-  master_password           = random_password.db_password.result
-  db_subnet_group_name      = aws_db_subnet_group.main.name
-  vpc_security_group_ids    = [aws_security_group.rds.id]
-  skip_final_snapshot       = false
-  final_snapshot_identifier = "${var.project_name}-final-snapshot"
-  backup_retention_period   = 7
-  preferred_backup_window   = "03:00-04:00"
+  cluster_identifier           = "${var.project_name}-cluster"
+  engine                       = "aurora-postgresql"
+  engine_version               = "15.3"
+  database_name                = var.db_name
+  master_username              = "postgres"
+  master_password              = random_password.db_password.result
+  db_subnet_group_name         = aws_db_subnet_group.main.name
+  vpc_security_group_ids       = [aws_security_group.rds.id]
+  skip_final_snapshot          = false
+  final_snapshot_identifier    = "${var.project_name}-final-snapshot"
+  backup_retention_period      = 7
+  preferred_backup_window      = "03:00-04:00"
   preferred_maintenance_window = "sun:04:00-sun:05:00"
-  storage_encrypted         = true
-  deletion_protection       = true
+  storage_encrypted            = true
+  deletion_protection          = true
 
   tags = {
     Name = "${var.project_name}-cluster"
@@ -205,14 +205,14 @@ resource "aws_rds_cluster" "main" {
 }
 
 resource "aws_rds_cluster_instance" "main" {
-  count                = 1
-  cluster_identifier   = aws_rds_cluster.main.id
-  instance_class       = var.db_instance_class
-  engine               = aws_rds_cluster.main.engine
-  engine_version       = aws_rds_cluster.main.engine_version
-  publicly_accessible  = false
-  monitoring_interval  = 60
-  monitoring_role_arn  = aws_iam_role.rds_monitoring.arn
+  count               = 1
+  cluster_identifier  = aws_rds_cluster.main.id
+  instance_class      = var.db_instance_class
+  engine              = aws_rds_cluster.main.engine
+  engine_version      = aws_rds_cluster.main.engine_version
+  publicly_accessible = false
+  monitoring_interval = 60
+  monitoring_role_arn = aws_iam_role.rds_monitoring.arn
 
   tags = {
     Name = "${var.project_name}-db-instance-${count.index + 1}"
@@ -371,10 +371,10 @@ resource "aws_apigatewayv2_stage" "prod" {
   auto_deploy = true
 
   default_route_settings {
-    logging_level            = "INFO"
-    data_trace_enabled       = false
-    throttling_burst_limit   = 100
-    throttling_rate_limit    = 50
+    logging_level          = "INFO"
+    data_trace_enabled     = false
+    throttling_burst_limit = 100
+    throttling_rate_limit  = 50
   }
 
   tags = {
