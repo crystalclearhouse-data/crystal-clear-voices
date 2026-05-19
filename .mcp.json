@@ -19,13 +19,6 @@
         "OUTLOOK_TENANT_ID": "common"
       }
     },
-    "macos": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "macos-mcp"
-      ]
-    },
     "elevenlabs": {
       "command": "npx",
       "args": [
@@ -64,26 +57,12 @@
     "postgres": {
       "command": "node",
       "args": [
-        "/Users/data-house/projects/crystalclearhouse-data/postgres-mcp.js"
+        "/home/user/crystal-clear-voices/postgres-mcp.js"
       ],
       "env": {
         "MCP_DB_URL": "${MCP_DB_URL}",
         "POSTGRES_ALLOWED_TABLES": "${POSTGRES_ALLOWED_TABLES}",
         "POSTGRES_MAX_ROWS": "${POSTGRES_MAX_ROWS}"
-      }
-    },
-    "social-media": {
-      "command": "node",
-      "args": [
-        "/Users/data-house/projects/crystalclearhouse-data/voice-server/social-mcp.js"
-      ],
-      "env": {
-        "META_PAGE_ID": "${META_PAGE_ID}",
-        "META_PAGE_ACCESS_TOKEN": "${META_PAGE_ACCESS_TOKEN}",
-        "META_IG_USER_ID": "${META_IG_USER_ID}",
-        "TIKTOK_ACCESS_TOKEN": "${TIKTOK_ACCESS_TOKEN}",
-        "TIKTOK_OPEN_ID": "${TIKTOK_OPEN_ID}",
-        "N8N_WEBHOOK_URL": "http://localhost:5678"
       }
     },
     "discord": {
@@ -113,26 +92,13 @@
         "NOTION_TOKEN": "${NOTION_TOKEN}"
       }
     },
-    "aws-documentation": {
-      "command": "/Users/data-house/.local/bin/uvx",
-      "args": [
-        "awslabs.aws-documentation-mcp-server@latest"
-      ],
-      "env": {
-        "FASTMCP_LOG_LEVEL": "ERROR",
-        "AWS_DOCUMENTATION_PARTITION": "aws",
-        "PATH": "/Users/data-house/.local/bin:/usr/local/bin:/usr/bin:/bin"
-      }
-    },
     "filesystem": {
       "command": "npx",
       "args": [
         "-y",
         "@modelcontextprotocol/server-filesystem",
-        "/Users/data-house/projects/crystalclearhouse-data/workflows",
-        "/Users/data-house/projects/crystalclearhouse-data/scripts",
-        "/Users/data-house/projects/crystalclearhouse-data/crew-service/configs",
-        "/Users/data-house/projects/crystalclearhouse-data/n8n-workflows"
+        "/home/user/crystal-clear-voices",
+        "/home/user/rushcall-ai"
       ]
     },
     "twilio": {
