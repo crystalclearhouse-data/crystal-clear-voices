@@ -1,0 +1,6 @@
+{
+  "model": "claude-opus-4-6",
+  "cwd": ".",
+  "autoApprove": false,
+  "sandbox": true
+}
